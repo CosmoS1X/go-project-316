@@ -1,0 +1,118 @@
+version: '2'
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # base
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - errcheck
+    - gosec
+    - bodyclose
+    - errorlint
+    - revive
+    - gocritic
+    - goconst
+    - nakedret
+    - nolintlint
+    # modern Go / HTTP
+    - modernize
+    - noctx
+    - usestdlibvars
+    - canonicalheader
+    - nosprintfhostport
+    - fatcontext
+    - contextcheck
+    - containedctx
+    # correctness
+    - exhaustive
+    - nilerr
+    - nilnil
+    - forcetypeassert
+    - errname
+    - errchkjson
+    - makezero
+    - mirror
+    - durationcheck
+    - predeclared
+    - reassign
+    - recvcheck
+    - inamedparam
+    - unconvert
+    - wastedassign
+    # quality / performance
+    - unparam
+    - prealloc
+    - perfsprint
+    - misspell
+    - bidichk
+    - asciicheck
+    - whitespace
+    - gocheckcompilerdirectives
+    # tests
+    - thelper
+    - tparallel
+    - usetesting
+    - testpackage
+  settings:
+    govet:
+      enable:
+        - shadow
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - exitAfterDefer
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    generated: lax
+    presets:
+      # doc comments are not required
+      - comments
+      - std-error-handling
+    rules:
+      # CLI takes the URL from arguments, so the SSRF pattern is expected
+      - linters:
+          - gosec
+        text: "G(107|704):"
+      # gosec is noisy in tests
+      - path: _test\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofumpt
+    - gci
+  settings:
+    gci:
+      custom-order: true
+      sections:
+        - standard
+        - default
+        - localmodule
+    gofumpt:
+      # update when the module is renamed
+      module-path: code
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
