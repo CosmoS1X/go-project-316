@@ -53,6 +53,7 @@
 │   ├── analyze.go           # Analyze(ctx, Options) ([]byte, error)
 │   ├── options.go           # Options, sentinel-ошибки, валидация
 │   ├── crawler.go           # структура обхода, Run/visit/visited
+│   ├── links.go             # извлечение ссылок и проверка битых ссылок
 │   ├── fetch.go             # HTTP-запрос, retries, timeout, User-Agent, rate limit
 │   ├── report.go            # Report/Page, JSON-сериализация
 │   └── *_test.go
@@ -100,16 +101,33 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
       "depth": 0,
       "http_status": 200,
       "status": "ok",
-      "error": ""
+      "error": "",
+      "broken_links": [
+        {
+          "url": "https://example.com/assets/ghost.css",
+          "status_code": 404
+        },
+        {
+          "url": "https://cdn.example.com/app.js",
+          "error": "Get \"https://cdn.example.com/app.js\": dial tcp: lookup cdn.example.com: no such host"
+        }
+      ],
+      "discovered_at": "2026-10-22T12:00:00Z"
     }
   ]
 }
 ```
 
 - `generated_at` — UTC с точностью до секунды.
+- `discovered_at` — UTC с точностью до секунды.
 - `status`: `ok` при HTTP < 400, иначе `error`.
 - `http_status`: 0 при сетевой ошибке.
 - `error`: пустая строка при успехе.
+- `broken_links` — всегда массив; содержит только ссылки с HTTP 4xx/5xx или сетевой ошибкой.
+- Для HTTP-ошибки заполняется `status_code`, для сетевой — `error`.
+- URL в `broken_links` абсолютный.
+- Проверяются `a[href]`, `link[href]`, `script[src]`, `img[src]`.
+- Пустые значения, `#...`, не-HTTP(S) схемы, URL без host и невалидные URL игнорируются.
 
 ## CLI
 
@@ -132,6 +150,6 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 1. **Сделано:** черновик отчёта, `make run URL=...`, инъекция клиента, код 0 при сетевых ошибках, тесты на `testify`.
 2. Полный `Options` и CLI-флаги из таблицы.
 3. Retries, per-request timeout, `User-Agent`, rate limiting (`golang.org/x/time/rate`).
-4. BFS-обход: `visited`, `Depth`, `Concurrency`/`workers`, извлечение ссылок (`golang.org/x/net/html`).
+4. **Частично:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img` и проверка битых ссылок для анализируемой страницы. Осталось: BFS (`visited`, `Depth`, `Concurrency`/`workers`).
 5. SEO-метрики страниц (title, description, h1, canonical и т.п.).
 6. Расширение тестов и финальная проверка линтером.
