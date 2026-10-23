@@ -3,6 +3,7 @@ package crawler
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -31,13 +32,16 @@ func (c *crawler) Run(ctx context.Context) *report {
 }
 
 func (c *crawler) visit(ctx context.Context, rawURL string, depth int) page {
-	statusCode, err := c.fetch(ctx, rawURL)
+	discoveredAt := time.Now().UTC().Truncate(time.Second)
+	statusCode, body, err := c.fetch(ctx, rawURL, true)
 
 	result := page{
-		URL:        rawURL,
-		Depth:      depth,
-		HTTPStatus: statusCode,
-		Status:     statusOK,
+		URL:          rawURL,
+		Depth:        depth,
+		HTTPStatus:   statusCode,
+		Status:       statusOK,
+		BrokenLinks:  make([]brokenLink, 0),
+		DiscoveredAt: discoveredAt,
 	}
 	switch {
 	case err != nil:
@@ -46,11 +50,17 @@ func (c *crawler) visit(ctx context.Context, rawURL string, depth int) page {
 	case statusCode >= http.StatusBadRequest:
 		result.Status = statusError
 		result.Error = "unexpected http status: " + strconv.Itoa(statusCode)
+	default:
+		result.BrokenLinks = c.findBrokenLinks(ctx, rawURL, body)
 	}
 	return result
 }
 
-func (c *crawler) fetch(ctx context.Context, rawURL string) (int, error) {
+func (c *crawler) fetch(
+	ctx context.Context,
+	rawURL string,
+	readBody bool,
+) (statusCode int, body []byte, err error) {
 	reqCtx := ctx
 	if c.opts.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -60,14 +70,22 @@ func (c *crawler) fetch(ctx context.Context, rawURL string) (int, error) {
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
-		return 0, fmt.Errorf("build request: %w", err)
+		return 0, nil, fmt.Errorf("build request: %w", err)
 	}
 
 	resp, err := c.opts.HTTPClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("fetch %s: %w", rawURL, err)
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 
-	return resp.StatusCode, nil
+	if !readBody {
+		return resp.StatusCode, nil, nil
+	}
+
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, nil, fmt.Errorf("read body: %w", err)
+	}
+	return resp.StatusCode, body, nil
 }
