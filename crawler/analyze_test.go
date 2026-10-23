@@ -3,8 +3,10 @@ package crawler_test
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,10 +26,18 @@ type testReport struct {
 }
 
 type testPage struct {
+	URL          string           `json:"url"`
+	Depth        int              `json:"depth"`
+	HTTPStatus   int              `json:"http_status"`
+	Status       string           `json:"status"`
+	Error        string           `json:"error"`
+	BrokenLinks  []testBrokenLink `json:"broken_links"`
+	DiscoveredAt time.Time        `json:"discovered_at"`
+}
+
+type testBrokenLink struct {
 	URL        string `json:"url"`
-	Depth      int    `json:"depth"`
-	HTTPStatus int    `json:"http_status"`
-	Status     string `json:"status"`
+	StatusCode int    `json:"status_code"`
 	Error      string `json:"error"`
 }
 
@@ -68,6 +78,214 @@ func TestAnalyzeSuccess(t *testing.T) {
 	assert.Equal(t, http.StatusOK, got.HTTPStatus)
 	assert.Equal(t, "ok", got.Status)
 	assert.Empty(t, got.Error)
+	assert.NotNil(t, got.BrokenLinks)
+	assert.Empty(t, got.BrokenLinks)
+	assert.False(t, got.DiscoveredAt.IsZero())
+}
+
+func TestAnalyzeBrokenLinks(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			_, err := io.WriteString(w, `<a href="/working">working</a><a href="/broken">broken</a>`)
+			if err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case "/working":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, []testBrokenLink{
+		{URL: srv.URL + "/broken", StatusCode: http.StatusNotFound},
+	}, rep.Pages[0].BrokenLinks)
+}
+
+func TestAnalyzeBrokenLinkTags(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			_, err := io.WriteString(w, `<!doctype html>
+<html>
+<head><link href="/assets/ghost.css"></head>
+<body>
+<a href="/working">working</a>
+<script src="/assets/app.js"></script>
+<img src="/assets/missing.png">
+</body>
+</html>`)
+			if err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case "/working", "/assets/app.js":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, []testBrokenLink{
+		{URL: srv.URL + "/assets/ghost.css", StatusCode: http.StatusNotFound},
+		{URL: srv.URL + "/assets/missing.png", StatusCode: http.StatusNotFound},
+	}, rep.Pages[0].BrokenLinks)
+}
+
+func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			_, err := io.WriteString(w, `<a href="">empty</a>
+<a href="   ">spaces</a>
+<a href="#top">fragment</a>
+<a href="mailto:test@example.com">mail</a>
+<a href="javascript:void(0)">js</a>
+<a href="ftp://example.com/file">ftp</a>
+<a href="http://[::1">malformed</a>
+<a href="https:///no-host">no host</a>
+<a href="/broken">broken</a>`)
+			if err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case "/broken":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, []testBrokenLink{
+		{URL: srv.URL + "/broken", StatusCode: http.StatusNotFound},
+	}, rep.Pages[0].BrokenLinks)
+}
+
+type brokenLinkTransport struct{}
+
+func (brokenLinkTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	switch req.URL.Path {
+	case "/":
+		return testResponse(req, `<a href="/ok">ok</a><script src="https://cdn.invalid/app.js"></script>`), nil
+	case "/ok":
+		return testResponse(req, ""), nil
+	default:
+		return nil, errors.New("connection failed")
+	}
+}
+
+func testResponse(req *http.Request, body string) *http.Response {
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Status:        http.StatusText(http.StatusOK),
+		Header:        make(http.Header),
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Request:       req,
+	}
+}
+
+func TestAnalyzeBrokenLinkNetworkError(t *testing.T) {
+	t.Parallel()
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        exampleURL + "/",
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: brokenLinkTransport{}},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	require.Len(t, rep.Pages[0].BrokenLinks, 1)
+
+	got := rep.Pages[0].BrokenLinks[0]
+	assert.Equal(t, "https://cdn.invalid/app.js", got.URL)
+	assert.Zero(t, got.StatusCode)
+	assert.Contains(t, got.Error, "connection failed")
+}
+
+type failingBody struct{}
+
+func (failingBody) Read([]byte) (int, error) {
+	return 0, errors.New("read failed")
+}
+
+func (failingBody) Close() error {
+	return nil
+}
+
+type failingBodyTransport struct{}
+
+func (failingBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     http.StatusText(http.StatusOK),
+		Header:     make(http.Header),
+		Body:       failingBody{},
+		Request:    req,
+	}, nil
+}
+
+func TestAnalyzeReadBodyError(t *testing.T) {
+	t.Parallel()
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        exampleURL + "/",
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: failingBodyTransport{}},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+
+	got := rep.Pages[0]
+	assert.Equal(t, http.StatusOK, got.HTTPStatus)
+	assert.Equal(t, "error", got.Status)
+	assert.Contains(t, got.Error, "read body")
+	assert.NotNil(t, got.BrokenLinks)
+	assert.Empty(t, got.BrokenLinks)
 }
 
 func TestAnalyzeHTTPError(t *testing.T) {
@@ -93,6 +311,8 @@ func TestAnalyzeHTTPError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, got.HTTPStatus)
 	assert.Equal(t, "error", got.Status)
 	assert.NotEmpty(t, got.Error)
+	assert.NotNil(t, got.BrokenLinks)
+	assert.Empty(t, got.BrokenLinks)
 }
 
 type failingTransport struct{}
