@@ -122,6 +122,31 @@ func TestAnalyzeNetworkError(t *testing.T) {
 	assert.NotEmpty(t, got.Error)
 }
 
+func TestAnalyzeTimeout(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    10 * time.Millisecond,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+
+	got := rep.Pages[0]
+	assert.Zero(t, got.HTTPStatus)
+	assert.Equal(t, "error", got.Status)
+	assert.NotEmpty(t, got.Error)
+}
+
 func TestAnalyzeInvalidOptions(t *testing.T) {
 	client := &http.Client{}
 
@@ -138,6 +163,11 @@ func TestAnalyzeInvalidOptions(t *testing.T) {
 		{
 			name:    "unsupported scheme",
 			opts:    crawler.Options{URL: "ftp://example.com", HTTPClient: client},
+			wantErr: crawler.ErrInvalidURL,
+		},
+		{
+			name:    "malformed url",
+			opts:    crawler.Options{URL: "http://[::1", HTTPClient: client},
 			wantErr: crawler.ErrInvalidURL,
 		},
 		{
