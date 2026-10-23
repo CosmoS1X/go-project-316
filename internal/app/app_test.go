@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 
+	"code/crawler"
 	"code/internal/app"
 )
 
@@ -79,4 +80,36 @@ func TestRunRequiresURL(t *testing.T) {
 	cmd.ExitErrHandler = func(context.Context, *cli.Command, error) {}
 
 	require.Error(t, cmd.Run(t.Context(), []string{commandName}))
+}
+
+func TestRunAnalyzeError(t *testing.T) {
+	t.Parallel()
+
+	cmd, _ := newTestCommand(&http.Client{})
+	cmd.ExitErrHandler = func(context.Context, *cli.Command, error) {}
+
+	err := cmd.Run(t.Context(), []string{commandName, "ftp://example.com"})
+	require.ErrorIs(t, err, crawler.ErrInvalidURL)
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func TestRunWriteError(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, _ := newTestCommand(srv.Client())
+	cmd.Writer = failingWriter{}
+	cmd.ExitErrHandler = func(context.Context, *cli.Command, error) {}
+
+	err := cmd.Run(t.Context(), []string{commandName, srv.URL})
+	require.ErrorContains(t, err, "write report")
 }
