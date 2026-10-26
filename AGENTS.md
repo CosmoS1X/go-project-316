@@ -101,6 +101,13 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
       "depth": 0,
       "http_status": 200,
       "status": "ok",
+      "seo": {
+        "has_title": true,
+        "title": "Example Test",
+        "has_description": false,
+        "description": "",
+        "has_h1": true
+      },
       "error": "",
       "broken_links": [
         {
@@ -122,6 +129,9 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 - `discovered_at` — UTC с точностью до секунды.
 - `status`: `ok` при HTTP < 400, иначе `error`.
 - `http_status`: 0 при сетевой ошибке.
+- `seo` — базовые SEO-метрики страницы: `has_title`/`title`, `has_description`/`description`, `has_h1`.
+- `has_*`: `true`, если соответствующий тег найден; иначе `false` и пустое текстовое поле.
+- Текст `title` и `description` — очищенный (лишние пробелы схлопнуты) и с раскодированными HTML-сущностями.
 - `error`: пустая строка при успехе.
 - `broken_links` — всегда массив; содержит только ссылки с HTTP 4xx/5xx или сетевой ошибкой.
 - Для HTTP-ошибки заполняется `status_code`, для сетевой — `error`.
