@@ -51,6 +51,7 @@ func (c *crawler) visit(ctx context.Context, rawURL string, depth int) page {
 		result.Status = statusError
 		result.Error = "unexpected http status: " + strconv.Itoa(statusCode)
 	default:
+		result.SEO = extractSEO(body)
 		result.BrokenLinks = c.findBrokenLinks(ctx, rawURL, body)
 	}
 	return result

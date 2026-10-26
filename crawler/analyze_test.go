@@ -30,9 +30,18 @@ type testPage struct {
 	Depth        int              `json:"depth"`
 	HTTPStatus   int              `json:"http_status"`
 	Status       string           `json:"status"`
+	SEO          testSEO          `json:"seo"`
 	Error        string           `json:"error"`
 	BrokenLinks  []testBrokenLink `json:"broken_links"`
 	DiscoveredAt time.Time        `json:"discovered_at"`
+}
+
+type testSEO struct {
+	HasTitle       bool   `json:"has_title"`
+	Title          string `json:"title"`
+	HasDescription bool   `json:"has_description"`
+	Description    string `json:"description"`
+	HasH1          bool   `json:"has_h1"`
 }
 
 type testBrokenLink struct {
@@ -81,6 +90,108 @@ func TestAnalyzeSuccess(t *testing.T) {
 	assert.NotNil(t, got.BrokenLinks)
 	assert.Empty(t, got.BrokenLinks)
 	assert.False(t, got.DiscoveredAt.IsZero())
+}
+
+func TestAnalyzeSEO(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, err := io.WriteString(w, `<!doctype html>
+<html>
+<head>
+<title> Example Test </title>
+<meta content="A description" name="description">
+</head>
+<body><h1>Main <span>Heading</span></h1></body>
+</html>`)
+		if err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, testSEO{
+		HasTitle:       true,
+		Title:          "Example Test",
+		HasDescription: true,
+		Description:    "A description",
+		HasH1:          true,
+	}, rep.Pages[0].SEO)
+}
+
+func TestAnalyzeSEOMissing(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, err := io.WriteString(w, `<!doctype html>
+<html>
+<head></head>
+<body><p>No SEO tags</p></body>
+</html>`)
+		if err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, testSEO{}, rep.Pages[0].SEO)
+}
+
+func TestAnalyzeSEOHTMLEntities(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, err := io.WriteString(w, `<!doctype html>
+<html>
+<head>
+<title>Fish &amp; Chips</title>
+<meta name="description" content="Tom &quot;Jerry&quot; &lt;cartoon&gt;">
+</head>
+<body><h1>Caf&eacute; &amp; Bar</h1></body>
+</html>`)
+		if err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, testSEO{
+		HasTitle:       true,
+		Title:          "Fish & Chips",
+		HasDescription: true,
+		Description:    `Tom "Jerry" <cartoon>`,
+		HasH1:          true,
+	}, rep.Pages[0].SEO)
 }
 
 func TestAnalyzeBrokenLinks(t *testing.T) {
