@@ -20,7 +20,7 @@
   Если покрытие участка нецелесообразно (glue-код `main`, недостижимые защитные ветки,
   логика сторонних пакетов), явно указывать это с обоснованием в отчёте о задаче.
 - Сетевые ошибки не считаются ошибкой запуска: они попадают в отчёт, код выхода — 0.
-  Код 1 — только при некорректных аргументах/опциях.
+  Код 1 — при некорректных аргументах/опциях и ошибках записи отчёта.
 - Линтер: `golangci-lint` (`2.15.0`), конфиг `.golangci.yml`. При ложном срабатывании
   сначала обсуждаем и правим конфиг, а не замалчиваем код.
 - Когда `Options` вырастет и `gocritic:hugeParam` начнёт ругаться на
@@ -54,8 +54,9 @@
 │   ├── options.go           # Options, sentinel-ошибки, валидация
 │   ├── crawler.go           # структура обхода, Run/visit/visited
 │   ├── links.go             # извлечение ссылок и проверка битых ссылок
+│   ├── seo.go               # SEO-метрики: title, description, h1
 │   ├── fetch.go             # HTTP-запрос, retries, timeout, User-Agent, rate limit
-│   ├── report.go            # Report/Page, JSON-сериализация
+│   ├── report.go            # типы отчёта и SEO, JSON-сериализация
 │   └── *_test.go
 ├── Makefile
 ├── .gitignore
@@ -132,6 +133,7 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 - `seo` — базовые SEO-метрики страницы: `has_title`/`title`, `has_description`/`description`, `has_h1`.
 - `has_*`: `true`, если соответствующий тег найден; иначе `false` и пустое текстовое поле.
 - Текст `title` и `description` — очищенный (лишние пробелы схлопнуты) и с раскодированными HTML-сущностями.
+- SEO вычисляется для успешно загруженных страниц; при сетевой или HTTP-ошибке блок `seo` остаётся нулевым.
 - `error`: пустая строка при успехе.
 - `broken_links` — всегда массив; содержит только ссылки с HTTP 4xx/5xx или сетевой ошибкой.
 - Для HTTP-ошибки заполняется `status_code`, для сетевой — `error`.
@@ -161,5 +163,5 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 2. Полный `Options` и CLI-флаги из таблицы.
 3. Retries, per-request timeout, `User-Agent`, rate limiting (`golang.org/x/time/rate`).
 4. **Частично:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img` и проверка битых ссылок для анализируемой страницы. Осталось: BFS (`visited`, `Depth`, `Concurrency`/`workers`).
-5. SEO-метрики страниц (title, description, h1, canonical и т.п.).
+5. **Частично:** SEO-метрики `title`, `description`, `h1` реализованы. Осталось: canonical и т.п.
 6. Расширение тестов и финальная проверка линтером.
