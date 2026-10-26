@@ -22,9 +22,18 @@ type page struct {
 	Depth        int          `json:"depth"`
 	HTTPStatus   int          `json:"http_status"`
 	Status       string       `json:"status"`
+	SEO          seo          `json:"seo"`
 	Error        string       `json:"error"`
 	BrokenLinks  []brokenLink `json:"broken_links"`
 	DiscoveredAt time.Time    `json:"discovered_at"`
+}
+
+type seo struct {
+	HasTitle       bool   `json:"has_title"`
+	Title          string `json:"title"`
+	HasDescription bool   `json:"has_description"`
+	Description    string `json:"description"`
+	HasH1          bool   `json:"has_h1"`
 }
 
 type brokenLink struct {
