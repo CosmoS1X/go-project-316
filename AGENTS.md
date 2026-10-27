@@ -52,10 +52,9 @@
 ├── crawler/
 │   ├── analyze.go           # Analyze(ctx, Options) ([]byte, error)
 │   ├── options.go           # Options, sentinel-ошибки, валидация
-│   ├── crawler.go           # структура обхода, Run/visit/visited
+│   ├── crawler.go           # структура обхода, Run/visit, BFS, fetch
 │   ├── links.go             # извлечение ссылок и проверка битых ссылок
 │   ├── seo.go               # SEO-метрики: title, description, h1
-│   ├── fetch.go             # HTTP-запрос, retries, timeout, User-Agent, rate limit
 │   ├── report.go            # типы отчёта и SEO, JSON-сериализация
 │   └── *_test.go
 ├── Makefile
@@ -162,6 +161,6 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 1. **Сделано:** черновик отчёта, `make run URL=...`, инъекция клиента, код 0 при сетевых ошибках, тесты на `testify`.
 2. Полный `Options` и CLI-флаги из таблицы.
 3. Retries, per-request timeout, `User-Agent`, rate limiting (`golang.org/x/time/rate`).
-4. **Частично:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img` и проверка битых ссылок для анализируемой страницы. Осталось: BFS (`visited`, `Depth`, `Concurrency`/`workers`).
+4. **Сделано:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img`, проверка битых ссылок, BFS с `visited`, обход по глубине с ограничением по `Depth`, фильтрация по домену, дедупликация. Осталось: `Concurrency`/`workers`.
 5. **Частично:** SEO-метрики `title`, `description`, `h1` реализованы. Осталось: canonical и т.п.
 6. Расширение тестов и финальная проверка линтером.
