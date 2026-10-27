@@ -1,11 +1,14 @@
 package crawler_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +18,14 @@ import (
 
 	"code/crawler"
 )
+
+func loadFixture(t *testing.T, name string) string {
+	t.Helper()
+
+	b, err := os.ReadFile(filepath.Join("testdata", name))
+	require.NoError(t, err)
+	return string(b)
+}
 
 const exampleURL = "https://example.com"
 
@@ -96,14 +107,7 @@ func TestAnalyzeSEO(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, err := io.WriteString(w, `<!doctype html>
-<html>
-<head>
-<title> Example Test </title>
-<meta content="A description" name="description">
-</head>
-<body><h1>Main <span>Heading</span></h1></body>
-</html>`)
+		_, err := io.WriteString(w, loadFixture(t, "seo_full.html"))
 		if err != nil {
 			t.Errorf("write response: %v", err)
 		}
@@ -133,11 +137,7 @@ func TestAnalyzeSEOMissing(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, err := io.WriteString(w, `<!doctype html>
-<html>
-<head></head>
-<body><p>No SEO tags</p></body>
-</html>`)
+		_, err := io.WriteString(w, loadFixture(t, "seo_missing.html"))
 		if err != nil {
 			t.Errorf("write response: %v", err)
 		}
@@ -161,14 +161,7 @@ func TestAnalyzeSEOHTMLEntities(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, err := io.WriteString(w, `<!doctype html>
-<html>
-<head>
-<title>Fish &amp; Chips</title>
-<meta name="description" content="Tom &quot;Jerry&quot; &lt;cartoon&gt;">
-</head>
-<body><h1>Caf&eacute; &amp; Bar</h1></body>
-</html>`)
+		_, err := io.WriteString(w, loadFixture(t, "seo_entities.html"))
 		if err != nil {
 			t.Errorf("write response: %v", err)
 		}
@@ -221,10 +214,25 @@ func TestAnalyzeBrokenLinks(t *testing.T) {
 	require.NoError(t, err)
 
 	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
+	require.Len(t, rep.Pages, 3)
+
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+	assert.Equal(t, 0, rep.Pages[0].Depth)
 	assert.Equal(t, []testBrokenLink{
 		{URL: srv.URL + "/broken", StatusCode: http.StatusNotFound},
 	}, rep.Pages[0].BrokenLinks)
+
+	assert.Equal(t, srv.URL+"/working", rep.Pages[1].URL)
+	assert.Equal(t, 1, rep.Pages[1].Depth)
+	assert.Equal(t, http.StatusOK, rep.Pages[1].HTTPStatus)
+	assert.Equal(t, "ok", rep.Pages[1].Status)
+	assert.Empty(t, rep.Pages[1].BrokenLinks)
+
+	assert.Equal(t, srv.URL+"/broken", rep.Pages[2].URL)
+	assert.Equal(t, 1, rep.Pages[2].Depth)
+	assert.Equal(t, http.StatusNotFound, rep.Pages[2].HTTPStatus)
+	assert.Equal(t, "error", rep.Pages[2].Status)
+	assert.Empty(t, rep.Pages[2].BrokenLinks)
 }
 
 func TestAnalyzeBrokenLinkTags(t *testing.T) {
@@ -233,15 +241,7 @@ func TestAnalyzeBrokenLinkTags(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			_, err := io.WriteString(w, `<!doctype html>
-<html>
-<head><link href="/assets/ghost.css"></head>
-<body>
-<a href="/working">working</a>
-<script src="/assets/app.js"></script>
-<img src="/assets/missing.png">
-</body>
-</html>`)
+			_, err := io.WriteString(w, loadFixture(t, "broken_tags.html"))
 			if err != nil {
 				t.Errorf("write response: %v", err)
 			}
@@ -262,11 +262,38 @@ func TestAnalyzeBrokenLinkTags(t *testing.T) {
 	require.NoError(t, err)
 
 	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
+	require.Len(t, rep.Pages, 5)
+
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+	assert.Equal(t, 0, rep.Pages[0].Depth)
 	assert.Equal(t, []testBrokenLink{
 		{URL: srv.URL + "/assets/ghost.css", StatusCode: http.StatusNotFound},
 		{URL: srv.URL + "/assets/missing.png", StatusCode: http.StatusNotFound},
 	}, rep.Pages[0].BrokenLinks)
+
+	assert.Equal(t, srv.URL+"/assets/ghost.css", rep.Pages[1].URL)
+	assert.Equal(t, 1, rep.Pages[1].Depth)
+	assert.Equal(t, http.StatusNotFound, rep.Pages[1].HTTPStatus)
+	assert.Equal(t, "error", rep.Pages[1].Status)
+	assert.Empty(t, rep.Pages[1].BrokenLinks)
+
+	assert.Equal(t, srv.URL+"/working", rep.Pages[2].URL)
+	assert.Equal(t, 1, rep.Pages[2].Depth)
+	assert.Equal(t, http.StatusOK, rep.Pages[2].HTTPStatus)
+	assert.Equal(t, "ok", rep.Pages[2].Status)
+	assert.Empty(t, rep.Pages[2].BrokenLinks)
+
+	assert.Equal(t, srv.URL+"/assets/app.js", rep.Pages[3].URL)
+	assert.Equal(t, 1, rep.Pages[3].Depth)
+	assert.Equal(t, http.StatusOK, rep.Pages[3].HTTPStatus)
+	assert.Equal(t, "ok", rep.Pages[3].Status)
+	assert.Empty(t, rep.Pages[3].BrokenLinks)
+
+	assert.Equal(t, srv.URL+"/assets/missing.png", rep.Pages[4].URL)
+	assert.Equal(t, 1, rep.Pages[4].Depth)
+	assert.Equal(t, http.StatusNotFound, rep.Pages[4].HTTPStatus)
+	assert.Equal(t, "error", rep.Pages[4].Status)
+	assert.Empty(t, rep.Pages[4].BrokenLinks)
 }
 
 func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
@@ -275,15 +302,7 @@ func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			_, err := io.WriteString(w, `<a href="">empty</a>
-<a href="   ">spaces</a>
-<a href="#top">fragment</a>
-<a href="mailto:test@example.com">mail</a>
-<a href="javascript:void(0)">js</a>
-<a href="ftp://example.com/file">ftp</a>
-<a href="http://[::1">malformed</a>
-<a href="https:///no-host">no host</a>
-<a href="/broken">broken</a>`)
+			_, err := io.WriteString(w, loadFixture(t, "broken_links_ignore.html"))
 			if err != nil {
 				t.Errorf("write response: %v", err)
 			}
@@ -304,10 +323,19 @@ func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
+	require.Len(t, rep.Pages, 2)
+
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+	assert.Equal(t, 0, rep.Pages[0].Depth)
 	assert.Equal(t, []testBrokenLink{
 		{URL: srv.URL + "/broken", StatusCode: http.StatusNotFound},
 	}, rep.Pages[0].BrokenLinks)
+
+	assert.Equal(t, srv.URL+"/broken", rep.Pages[1].URL)
+	assert.Equal(t, 1, rep.Pages[1].Depth)
+	assert.Equal(t, http.StatusNotFound, rep.Pages[1].HTTPStatus)
+	assert.Equal(t, "error", rep.Pages[1].Status)
+	assert.Empty(t, rep.Pages[1].BrokenLinks)
 }
 
 type brokenLinkTransport struct{}
@@ -346,13 +374,22 @@ func TestAnalyzeBrokenLinkNetworkError(t *testing.T) {
 	require.NoError(t, err)
 
 	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
+	require.Len(t, rep.Pages, 2)
+
+	assert.Equal(t, exampleURL+"/", rep.Pages[0].URL)
+	assert.Equal(t, 0, rep.Pages[0].Depth)
 	require.Len(t, rep.Pages[0].BrokenLinks, 1)
 
 	got := rep.Pages[0].BrokenLinks[0]
 	assert.Equal(t, "https://cdn.invalid/app.js", got.URL)
 	assert.Zero(t, got.StatusCode)
 	assert.Contains(t, got.Error, "connection failed")
+
+	assert.Equal(t, exampleURL+"/ok", rep.Pages[1].URL)
+	assert.Equal(t, 1, rep.Pages[1].Depth)
+	assert.Equal(t, http.StatusOK, rep.Pages[1].HTTPStatus)
+	assert.Equal(t, "ok", rep.Pages[1].Status)
+	assert.Empty(t, rep.Pages[1].BrokenLinks)
 }
 
 type failingBody struct{}
@@ -478,6 +515,35 @@ func TestAnalyzeTimeout(t *testing.T) {
 	assert.NotEmpty(t, got.Error)
 }
 
+func TestAnalyzeNormalizeURLForKeyWithBadLink(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			_, err := io.WriteString(w, `<a href="http://%zz">bad</a>`)
+			if err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+}
+
 func TestAnalyzeInvalidOptions(t *testing.T) {
 	client := &http.Client{}
 
@@ -529,4 +595,157 @@ func TestAnalyzeInvalidOptions(t *testing.T) {
 			require.ErrorIs(t, err, tt.wantErr)
 		})
 	}
+}
+
+func TestAnalyzeDepthZero(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			_, err := io.WriteString(w, `<a href="/inner">inner</a>`)
+			if err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case "/inner":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      0,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+	assert.Equal(t, 0, rep.Pages[0].Depth)
+	assert.Equal(t, "ok", rep.Pages[0].Status)
+}
+
+func TestAnalyzeDuplicateInternalLinks(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			_, err := io.WriteString(w, `<a href="/page">1</a><a href="/page">2</a><a href="/page/">3</a>`)
+			if err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case "/page", "/page/":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 2)
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+	assert.Equal(t, 0, rep.Pages[0].Depth)
+	assert.Equal(t, "ok", rep.Pages[0].Status)
+	assert.Equal(t, 1, rep.Pages[1].Depth)
+	assert.Equal(t, "ok", rep.Pages[1].Status)
+	assert.NotEqual(t, rep.Pages[1].URL, rep.Pages[0].URL)
+}
+
+func TestAnalyzeExternalLinkNotTraversed(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			_, err := io.WriteString(w, `<a href="/ok">ok</a><a href="https://other.example/x">ext</a>`)
+			if err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case "/ok":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 2)
+
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+	assert.Equal(t, 0, rep.Pages[0].Depth)
+	assert.Equal(t, srv.URL+"/ok", rep.Pages[1].URL)
+	assert.Equal(t, 1, rep.Pages[1].Depth)
+	assert.Equal(t, "ok", rep.Pages[1].Status)
+
+	for _, p := range rep.Pages {
+		assert.NotContains(t, p.URL, "other.example")
+	}
+}
+
+func TestAnalyzeContextCancelMidCrawl(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			_, err := io.WriteString(w, `<a href="/a">a</a><a href="/b">b</a>`)
+			if err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case "/a":
+			time.Sleep(50 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+		case "/b":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	data, err := crawler.Analyze(ctx, crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+	require.True(t, json.Valid(data))
+
+	var rep testReport
+	require.NoError(t, json.Unmarshal(data, &rep))
+	require.NotEmpty(t, rep.Pages)
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
 }
