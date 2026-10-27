@@ -44,7 +44,7 @@ func validateURL(rawURL string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidURL, err)
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+	if parsed.Scheme != schemeHTTP && parsed.Scheme != schemeHTTPS {
 		return fmt.Errorf("%w: unsupported scheme %q", ErrInvalidURL, parsed.Scheme)
 	}
 	if parsed.Host == "" {
