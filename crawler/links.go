@@ -10,6 +10,11 @@ import (
 	"golang.org/x/net/html"
 )
 
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
 func (c *crawler) findBrokenLinks(ctx context.Context, pageURL string, body []byte) []brokenLink {
 	base, err := url.Parse(pageURL)
 	if err != nil {
@@ -93,11 +98,26 @@ func resolveLink(base *url.URL, raw string) (string, bool) {
 	}
 
 	absolute := base.ResolveReference(ref)
-	if absolute.Scheme != "http" && absolute.Scheme != "https" {
+	if absolute.Scheme != schemeHTTP && absolute.Scheme != schemeHTTPS {
 		return "", false
 	}
 	if absolute.Host == "" {
 		return "", false
 	}
 	return absolute.String(), true
+}
+
+func normalizeURLForKey(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	u.Fragment = ""
+	if u.Path != "/" && strings.HasSuffix(u.Path, "/") {
+		u.Path = strings.TrimSuffix(u.Path, "/")
+		if u.Path == "" {
+			u.Path = "/"
+		}
+	}
+	return u.String()
 }
