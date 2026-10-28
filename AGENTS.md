@@ -72,21 +72,20 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 
 ## Options
 
-Текущие поля:
+Поля:
 
 - `URL string`
 - `Depth int`
 - `Timeout time.Duration`
 - `IndentJSON bool`
 - `HTTPClient *http.Client`
-
-Добавить на следующих шагах:
-
 - `Retries int`
 - `Delay time.Duration`
 - `UserAgent string`
 - `Concurrency int`
 - `RPS float64` (приоритет над `Delay`)
+
+Валидация: отрицательные `Depth`, `Timeout`, `Retries`, `Delay`, `Concurrency`, `RPS` возвращают `ErrInvalidOptions`. `HTTPClient` обязателен, `URL` проверяется как HTTP(S).
 
 ## JSON-отчёт
 
@@ -142,9 +141,9 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 
 ## CLI
 
-Текущий шаг: `hexlet-go-crawler <url>` (обязательный аргумент) + `--help`.
+`hexlet-go-crawler <url>` (обязательный аргумент) + `--help`.
 
-Целевой набор флагов:
+Флаги:
 
 | Флаг | Тип | По умолчанию |
 | --- | --- | --- |
@@ -156,11 +155,13 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 | `--user-agent` | string | "" |
 | `--workers` | int | 4 |
 
+`RPS` имеет приоритет над `Delay`. Глобальное ограничение частоты применяется ко всем HTTP-запросам (страницы и проверки битых ссылок). `User-Agent` добавляется к запросам, если указан. При отмене контекста ожидание rate-лимитера прерывается без зависания.
+
 ## Роадмап
 
 1. **Сделано:** черновик отчёта, `make run URL=...`, инъекция клиента, код 0 при сетевых ошибках, тесты на `testify`.
-2. Полный `Options` и CLI-флаги из таблицы.
-3. Retries, per-request timeout, `User-Agent`, rate limiting (`golang.org/x/time/rate`).
-4. **Сделано:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img`, проверка битых ссылок, BFS с `visited`, обход по глубине с ограничением по `Depth`, фильтрация по домену, дедупликация. Осталось: `Concurrency`/`workers`.
+2. **Сделано:** Полный `Options` и CLI-флаги из таблицы.
+3. **Частично:** per-request timeout, `User-Agent`, rate limiting (`golang.org/x/time/rate`) реализованы. `Retries` добавлены в `Options` и CLI, но логика повторных попыток пока не реализована.
+4. **Сделано:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img`, проверка битых ссылок, BFS с `visited`, обход по глубине с ограничением по `Depth`, фильтрация по домену, дедупликация. Осталось: `Concurrency`/`workers` (поля добавлены, но параллельный обход пока не реализован).
 5. **Частично:** SEO-метрики `title`, `description`, `h1` реализованы. Осталось: canonical и т.п.
 6. Расширение тестов и финальная проверка линтером.
