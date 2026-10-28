@@ -8,17 +8,29 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 type crawler struct {
-	opts Options
+	opts    Options
+	limiter *rate.Limiter
 }
 
 func newCrawler(opts Options) (*crawler, error) {
 	if err := opts.validate(); err != nil {
 		return nil, err
 	}
-	return &crawler{opts: opts}, nil
+
+	var limiter *rate.Limiter
+	if opts.RPS > 0 {
+		// RPS has priority over Delay
+		limiter = rate.NewLimiter(rate.Limit(opts.RPS), 1)
+	} else if opts.Delay > 0 {
+		limiter = rate.NewLimiter(rate.Every(opts.Delay), 1)
+	}
+
+	return &crawler{opts: opts, limiter: limiter}, nil
 }
 
 func (c *crawler) Run(ctx context.Context) *report {
@@ -150,6 +162,12 @@ func (c *crawler) fetch(
 	rawURL string,
 	readBody bool,
 ) (statusCode int, body []byte, err error) {
+	if c.limiter != nil {
+		if waitErr := c.limiter.Wait(ctx); waitErr != nil {
+			return 0, nil, waitErr
+		}
+	}
+
 	reqCtx := ctx
 	if c.opts.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -160,6 +178,9 @@ func (c *crawler) fetch(
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
 		return 0, nil, fmt.Errorf("build request: %w", err)
+	}
+	if c.opts.UserAgent != "" {
+		req.Header.Set("User-Agent", c.opts.UserAgent)
 	}
 
 	resp, err := c.opts.HTTPClient.Do(req)
