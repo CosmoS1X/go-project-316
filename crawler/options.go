@@ -15,11 +15,16 @@ var (
 )
 
 type Options struct {
-	URL        string
-	Depth      int
-	Timeout    time.Duration
-	IndentJSON bool
-	HTTPClient *http.Client
+	URL         string
+	Depth       int
+	Timeout     time.Duration
+	IndentJSON  bool
+	HTTPClient  *http.Client
+	Retries     int
+	Delay       time.Duration
+	UserAgent   string
+	Concurrency int
+	RPS         float64
 }
 
 func (o Options) validate() error {
@@ -31,6 +36,18 @@ func (o Options) validate() error {
 	}
 	if o.Timeout < 0 {
 		return fmt.Errorf("%w: timeout must not be negative", ErrInvalidOptions)
+	}
+	if o.Retries < 0 {
+		return fmt.Errorf("%w: retries must not be negative", ErrInvalidOptions)
+	}
+	if o.Delay < 0 {
+		return fmt.Errorf("%w: delay must not be negative", ErrInvalidOptions)
+	}
+	if o.Concurrency < 0 {
+		return fmt.Errorf("%w: concurrency must not be negative", ErrInvalidOptions)
+	}
+	if o.RPS < 0 {
+		return fmt.Errorf("%w: rps must not be negative", ErrInvalidOptions)
 	}
 	return validateURL(o.URL)
 }
