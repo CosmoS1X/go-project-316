@@ -72,6 +72,7 @@ linters:
         - performance
       disabled-checks:
         - exitAfterDefer
+        - hugeParam
     errcheck:
       check-type-assertions: true
       check-blank: true
