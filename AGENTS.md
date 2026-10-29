@@ -52,7 +52,8 @@
 ├── crawler/
 │   ├── analyze.go           # Analyze(ctx, Options) ([]byte, error)
 │   ├── options.go           # Options, sentinel-ошибки, валидация
-│   ├── crawler.go           # структура обхода, Run/visit, BFS, fetch
+│   ├── crawler.go           # структура обхода, Run/visit, BFS
+│   ├── fetch.go             # fetch/attempt, повторы, rate limiting и timeout попытки
 │   ├── links.go             # извлечение ссылок и проверка битых ссылок
 │   ├── seo.go               # SEO-метрики: title, description, h1
 │   ├── report.go            # типы отчёта и SEO, JSON-сериализация
