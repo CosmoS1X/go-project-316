@@ -13,7 +13,7 @@
 - В продакшен-коде `main` создаёт стандартный `&http.Client{}`; тесты передают
   тестовый клиент (`httptest` / кастомный `http.RoundTripper`).
 - `Analyze(ctx, Options)` — тонкая точка входа: валидация, запуск обхода, сериализация.
-  Состояние обхода (клиент, опции, `visited`) живёт в отдельной структуре с методами.
+  Состояние обхода (`opts`, `limiter`) живёт в структуре `crawler`; `visited` — локальная карта в `Run`.
 - Тесты — во внешних пакетах `_test` (включён линтер `testpackage`), на `testify`:
   `require` для обязательных проверок, `assert` для остальных.
 - Стремиться к максимальному покрытию, включая негативные сценарии и обработку ошибок.
@@ -23,9 +23,8 @@
   Код 1 — при некорректных аргументах/опциях и ошибках записи отчёта.
 - Линтер: `golangci-lint` (`2.15.0`), конфиг `.golangci.yml`. При ложном срабатывании
   сначала обсуждаем и правим конфиг, а не замалчиваем код.
-- Когда `Options` вырастет и `gocritic:hugeParam` начнёт ругаться на
-  `Analyze(ctx, Options)` (порог 80 байт), добавить `hugeParam` в
-  `gocritic.disabled-checks`.
+- `gocritic:hugeParam` уже отключён в `.golangci.yml`, так как `Options`
+  передаётся по значению.
 - Makefile: `build`, `test`, `cover` (профиль + сводка), `cover-show` (открыть отчёт
   в браузере), `run`, `fmt`, `lint` (зависит от `fmt`), `tidy`, `clean`.
 - Перед завершением задачи обязательно: `make test && make lint`.
@@ -33,12 +32,13 @@
 ## Коммиты
 
 - Коммиты делаются только по явному запросу.
-- Conventional Commits: `feat:`, `fix:`, `chore:`, `test:`, `docs:`, `ci:`.
+- Conventional Commits: `feat:`, `fix:`, `refactor:`, `chore:`, `test:`, `docs:`, `ci:`.
 - Commit-сообщения — на английском.
 - Коммиты небольшие и логически раздельные; каждый коммит должен собираться
   (`go build ./...` или `make build`).
 - Примеры: `feat: add depth flag`, `fix: keep exit code zero on network errors`,
-  `test: cover invalid urls`, `docs: describe commit conventions`.
+  `refactor: extract fetch logic into fetch.go`, `test: cover invalid urls`,
+  `docs: describe commit conventions`.
 
 ## Целевая структура
 
@@ -83,7 +83,7 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 - `Retries int`
 - `Delay time.Duration`
 - `UserAgent string`
-- `Concurrency int`
+- `Concurrency int` (пока не используется)
 - `RPS float64` (приоритет над `Delay`)
 
 Валидация: отрицательные `Depth`, `Timeout`, `Retries`, `Delay`, `Concurrency`, `RPS` возвращают `ErrInvalidOptions`. `HTTPClient` обязателен, `URL` проверяется как HTTP(S).
@@ -127,8 +127,8 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 
 - `generated_at` — UTC с точностью до секунды.
 - `discovered_at` — UTC с точностью до секунды.
-- `status`: `ok` при HTTP < 400, иначе `error`.
-- `http_status`: 0 при сетевой ошибке.
+- `status`: `ok`, если запрос успешен и HTTP < 400; иначе `error`.
+- `http_status`: 0, если ответ не получен; при ошибке чтения тела сохраняется полученный код ответа.
 - `seo` — базовые SEO-метрики страницы: `has_title`/`title`, `has_description`/`description`, `has_h1`.
 - `has_*`: `true`, если соответствующий тег найден; иначе `false` и пустое текстовое поле.
 - Текст `title` и `description` — очищенный (лишние пробелы схлопнуты) и с раскодированными HTML-сущностями.
@@ -156,7 +156,7 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 | `--user-agent` | string | "" |
 | `--workers` | int | 4 |
 
-`RPS` имеет приоритет над `Delay`. Глобальное ограничение частоты применяется ко всем HTTP-запросам (страницы и проверки битых ссылок). `User-Agent` добавляется к запросам, если указан. При отмене контекста ожидание rate-лимитера прерывается без зависания.
+`--workers`/`Concurrency` пока не влияют на обход. `RPS` имеет приоритет над `Delay`. Глобальное ограничение частоты применяется ко всем HTTP-запросам (страницы и проверки битых ссылок). `User-Agent` добавляется к запросам, если указан. При отмене контекста ожидание rate-лимитера прерывается без зависания.
 
 `Retries` задаёт максимальное число повторных попыток (всего до `Retries + 1` запросов). Повторяются только временные сбои: сетевые ошибки, `429` и `5xx`; успех прекращает повторы. Перед каждой повторной попыткой выдерживается ненулевая пауза, прерываемая отменой контекста. В отчёт попадает результат последней попытки.
 
@@ -165,6 +165,7 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 1. **Сделано:** черновик отчёта, `make run URL=...`, инъекция клиента, код 0 при сетевых ошибках, тесты на `testify`.
 2. **Сделано:** Полный `Options` и CLI-флаги из таблицы.
 3. **Сделано:** per-request timeout, `User-Agent`, rate limiting (`golang.org/x/time/rate`) и повторные попытки (`Retries`) для временных ошибок с ненулевой паузой между попытками.
-4. **Сделано:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img`, проверка битых ссылок, BFS с `visited`, обход по глубине с ограничением по `Depth`, фильтрация по домену, дедупликация. Осталось: `Concurrency`/`workers` (поля добавлены, но параллельный обход пока не реализован).
-5. **Частично:** SEO-метрики `title`, `description`, `h1` реализованы. Осталось: canonical и т.п.
-6. Расширение тестов и финальная проверка линтером.
+4. **Сделано:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img`, проверка битых ссылок, BFS с `visited`, обход по глубине с ограничением по `Depth`, фильтрация по домену, дедупликация.
+5. **Частично:** параллельный обход (`Concurrency`/`--workers`): поля и флаг добавлены, но пока не используются.
+6. **Частично:** SEO-метрики `title`, `description`, `h1` реализованы. Осталось: canonical и т.п.
+7. Расширение тестов и финальная проверка линтером.
