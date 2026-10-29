@@ -2,8 +2,6 @@ package crawler
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -155,47 +153,4 @@ func (c *crawler) visit(ctx context.Context, rawURL string, depth int) (p page, 
 		result.BrokenLinks = c.findBrokenLinks(ctx, rawURL, body)
 		return result, body
 	}
-}
-
-func (c *crawler) fetch(
-	ctx context.Context,
-	rawURL string,
-	readBody bool,
-) (statusCode int, body []byte, err error) {
-	if c.limiter != nil {
-		if waitErr := c.limiter.Wait(ctx); waitErr != nil {
-			return 0, nil, waitErr
-		}
-	}
-
-	reqCtx := ctx
-	if c.opts.Timeout > 0 {
-		var cancel context.CancelFunc
-		reqCtx, cancel = context.WithTimeout(ctx, c.opts.Timeout)
-		defer cancel()
-	}
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, http.NoBody)
-	if err != nil {
-		return 0, nil, fmt.Errorf("build request: %w", err)
-	}
-	if c.opts.UserAgent != "" {
-		req.Header.Set("User-Agent", c.opts.UserAgent)
-	}
-
-	resp, err := c.opts.HTTPClient.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-
-	if !readBody {
-		return resp.StatusCode, nil, nil
-	}
-
-	body, err = io.ReadAll(resp.Body)
-	if err != nil {
-		return resp.StatusCode, nil, fmt.Errorf("read body: %w", err)
-	}
-	return resp.StatusCode, body, nil
 }

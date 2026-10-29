@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,6 +54,32 @@ func TestRunPrintsReport(t *testing.T) {
 	assert.Equal(t, srv.URL, rep.RootURL)
 	require.Len(t, rep.Pages, 1)
 	assert.Equal(t, http.StatusOK, rep.Pages[0].HTTPStatus)
+}
+
+func TestRunUsesRetriesFlag(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, buf := newTestCommand(srv.Client())
+	require.NoError(t, cmd.Run(t.Context(), []string{
+		commandName, "--retries", "2", srv.URL,
+	}))
+
+	var rep testReport
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &rep), "output: %s", buf.String())
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, http.StatusOK, rep.Pages[0].HTTPStatus)
+	assert.Equal(t, "ok", rep.Pages[0].Status)
+	assert.Equal(t, int32(3), calls.Load())
 }
 
 type failingTransport struct{}
