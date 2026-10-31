@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -15,6 +16,21 @@ const (
 	schemeHTTPS = "https"
 )
 
+type linkKind int
+
+const (
+	linkNavigation linkKind = iota
+	linkImage
+	linkScript
+	linkStyle
+	linkOther
+)
+
+type extractedLink struct {
+	URL  string
+	Kind linkKind
+}
+
 func (c *crawler) findBrokenLinks(ctx context.Context, pageURL string, body []byte) []brokenLink {
 	base, err := url.Parse(pageURL)
 	if err != nil {
@@ -23,26 +39,34 @@ func (c *crawler) findBrokenLinks(ctx context.Context, pageURL string, body []by
 
 	rawLinks := extractLinks(body)
 	broken := make([]brokenLink, 0, len(rawLinks))
-	for _, raw := range rawLinks {
-		linkURL, ok := resolveLink(base, raw)
+	for _, link := range rawLinks {
+		if link.Kind != linkNavigation {
+			continue
+		}
+
+		linkURL, ok := resolveLink(base, link.URL)
 		if !ok {
 			continue
 		}
 
-		statusCode, _, err := c.fetch(ctx, linkURL, false)
+		result := c.fetch(ctx, linkURL, fetchStatusOnly)
 		switch {
-		case err != nil:
-			broken = append(broken, brokenLink{URL: linkURL, Error: err.Error()})
-		case statusCode >= http.StatusBadRequest:
-			broken = append(broken, brokenLink{URL: linkURL, StatusCode: statusCode})
+		case result.Err != nil:
+			broken = append(broken, brokenLink{URL: linkURL, Error: result.Err.Error()})
+		case result.StatusCode >= http.StatusBadRequest:
+			broken = append(broken, brokenLink{
+				URL:        linkURL,
+				StatusCode: result.StatusCode,
+				Error:      statusErrorText(result.StatusCode),
+			})
 		}
 	}
 	return broken
 }
 
-func extractLinks(body []byte) []string {
+func extractLinks(body []byte) []extractedLink {
 	tokenizer := html.NewTokenizer(bytes.NewReader(body))
-	links := make([]string, 0)
+	links := make([]extractedLink, 0)
 
 	for {
 		tokenType := tokenizer.Next()
@@ -53,25 +77,35 @@ func extractLinks(body []byte) []string {
 			continue
 		}
 
-		tagName, hasAttrs := tokenizer.TagName()
-		if !hasAttrs {
-			continue
-		}
-
-		attrName := linkAttribute(string(tagName))
+		tagName, _ := tokenizer.TagName()
+		tag := string(tagName)
+		attrName := linkAttribute(tag)
 		if attrName == "" {
 			continue
 		}
 
+		var rawURL, rel string
 		for {
 			key, value, more := tokenizer.TagAttr()
-			if string(key) == attrName {
-				links = append(links, string(value))
+			switch string(key) {
+			case attrName:
+				rawURL = string(value)
+			case "rel":
+				rel = string(value)
 			}
 			if !more {
 				break
 			}
 		}
+
+		if rawURL == "" {
+			continue
+		}
+		kind, ok := linkKindFor(tag, rel)
+		if !ok {
+			continue
+		}
+		links = append(links, extractedLink{URL: rawURL, Kind: kind})
 	}
 }
 
@@ -84,6 +118,28 @@ func linkAttribute(tagName string) string {
 	default:
 		return ""
 	}
+}
+
+func linkKindFor(tagName, rel string) (linkKind, bool) {
+	switch tagName {
+	case "a":
+		return linkNavigation, true
+	case "img":
+		return linkImage, true
+	case "script":
+		return linkScript, true
+	case "link":
+		if hasRelToken(rel, "stylesheet") {
+			return linkStyle, true
+		}
+		return linkOther, true
+	default:
+		return linkOther, false
+	}
+}
+
+func hasRelToken(rel, token string) bool {
+	return slices.Contains(strings.Fields(strings.ToLower(rel)), token)
 }
 
 func resolveLink(base *url.URL, raw string) (string, bool) {

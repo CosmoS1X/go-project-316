@@ -11,8 +11,9 @@ import (
 )
 
 type crawler struct {
-	opts    Options
-	limiter *rate.Limiter
+	opts       Options
+	limiter    *rate.Limiter
+	assetCache map[string]asset
 }
 
 func newCrawler(opts Options) (*crawler, error) {
@@ -28,7 +29,11 @@ func newCrawler(opts Options) (*crawler, error) {
 		limiter = rate.NewLimiter(rate.Every(opts.Delay), 1)
 	}
 
-	return &crawler{opts: opts, limiter: limiter}, nil
+	return &crawler{
+		opts:       opts,
+		limiter:    limiter,
+		assetCache: make(map[string]asset),
+	}, nil
 }
 
 func (c *crawler) Run(ctx context.Context) *report {
@@ -88,11 +93,14 @@ func (c *crawler) Run(ctx context.Context) *report {
 			continue
 		}
 
-		for _, raw := range extractLinks(body) {
+		for _, link := range extractLinks(body) {
+			if link.Kind != linkNavigation {
+				continue
+			}
 			if ctx.Err() != nil {
 				break
 			}
-			linkURL, ok := resolveLink(base, raw)
+			linkURL, ok := resolveLink(base, link.URL)
 			if !ok {
 				continue
 			}
@@ -129,28 +137,30 @@ func (c *crawler) Run(ctx context.Context) *report {
 
 func (c *crawler) visit(ctx context.Context, rawURL string, depth int) (p page, body []byte) {
 	discoveredAt := time.Now().UTC().Truncate(time.Second)
-	statusCode, body, err := c.fetch(ctx, rawURL, true)
+	result := c.fetch(ctx, rawURL, fetchFullBody)
 
-	result := page{
+	p = page{
 		URL:          rawURL,
 		Depth:        depth,
-		HTTPStatus:   statusCode,
+		HTTPStatus:   result.StatusCode,
 		Status:       statusOK,
 		BrokenLinks:  make([]brokenLink, 0),
+		Assets:       make([]asset, 0),
 		DiscoveredAt: discoveredAt,
 	}
 	switch {
-	case err != nil:
-		result.Status = statusError
-		result.Error = err.Error()
-		return result, nil
-	case statusCode >= http.StatusBadRequest:
-		result.Status = statusError
-		result.Error = "unexpected http status: " + strconv.Itoa(statusCode)
-		return result, nil
+	case result.Err != nil:
+		p.Status = statusError
+		p.Error = result.Err.Error()
+		return p, nil
+	case result.StatusCode >= http.StatusBadRequest:
+		p.Status = statusError
+		p.Error = "unexpected http status: " + strconv.Itoa(result.StatusCode)
+		return p, nil
 	default:
-		result.SEO = extractSEO(body)
-		result.BrokenLinks = c.findBrokenLinks(ctx, rawURL, body)
-		return result, body
+		p.SEO = extractSEO(result.Body)
+		p.Assets = c.collectAssets(ctx, rawURL, result.Body)
+		p.BrokenLinks = c.findBrokenLinks(ctx, rawURL, result.Body)
+		return p, result.Body
 	}
 }
