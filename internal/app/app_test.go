@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -98,6 +99,25 @@ func TestRunNetworkErrorExitsSuccessfully(t *testing.T) {
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &rep), "output: %s", buf.String())
 	require.Len(t, rep.Pages, 1)
 	assert.Equal(t, "error", rep.Pages[0].Status)
+}
+
+func TestRunPrintsJSONVerbatim(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, buf := newTestCommand(srv.Client())
+	require.NoError(t, cmd.Run(t.Context(), []string{commandName, srv.URL}))
+
+	out := buf.String()
+	require.NotEmpty(t, out)
+	assert.Equal(t, "{", out[:1], "output must not contain text before the JSON object")
+	assert.True(t, strings.HasSuffix(out, "}\n"), "output must end with a single trailing newline")
+	assert.False(t, strings.HasSuffix(out, "\n\n"), "output must not contain extra trailing newlines")
+	assert.True(t, json.Valid([]byte(strings.TrimSuffix(out, "\n"))))
 }
 
 func TestRunRequiresURL(t *testing.T) {
