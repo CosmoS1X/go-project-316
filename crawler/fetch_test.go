@@ -313,7 +313,7 @@ func TestAnalyzeBrokenLinkReportsLastAttempt(t *testing.T) {
 	rep := decodeReport(t, data)
 	require.Len(t, rep.Pages, 2)
 	assert.Equal(t, []testBrokenLink{
-		{URL: srv.URL + "/asset", StatusCode: http.StatusNotFound},
+		{URL: srv.URL + "/asset", StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
 	}, rep.Pages[0].BrokenLinks)
 	assert.Equal(t, int32(3), assetCalls.Load(), "broken link check retries once, then the page is visited")
 }
