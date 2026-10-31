@@ -27,7 +27,10 @@ func loadFixture(t *testing.T, name string) string {
 	return string(b)
 }
 
-const exampleURL = "https://example.com"
+const (
+	exampleURL  = "https://example.com"
+	exampleHost = "example.com"
+)
 
 type testReport struct {
 	RootURL     string     `json:"root_url"`
@@ -44,6 +47,7 @@ type testPage struct {
 	SEO          testSEO          `json:"seo"`
 	Error        string           `json:"error"`
 	BrokenLinks  []testBrokenLink `json:"broken_links"`
+	Assets       []testAsset      `json:"assets"`
 	DiscoveredAt time.Time        `json:"discovered_at"`
 }
 
@@ -58,6 +62,14 @@ type testSEO struct {
 type testBrokenLink struct {
 	URL        string `json:"url"`
 	StatusCode int    `json:"status_code"`
+	Error      string `json:"error"`
+}
+
+type testAsset struct {
+	URL        string `json:"url"`
+	Type       string `json:"type"`
+	StatusCode int    `json:"status_code"`
+	SizeBytes  int64  `json:"size_bytes"`
 	Error      string `json:"error"`
 }
 
@@ -100,6 +112,8 @@ func TestAnalyzeSuccess(t *testing.T) {
 	assert.Empty(t, got.Error)
 	assert.NotNil(t, got.BrokenLinks)
 	assert.Empty(t, got.BrokenLinks)
+	assert.NotNil(t, got.Assets)
+	assert.Empty(t, got.Assets)
 	assert.False(t, got.DiscoveredAt.IsZero())
 }
 
@@ -219,7 +233,7 @@ func TestAnalyzeBrokenLinks(t *testing.T) {
 	assert.Equal(t, srv.URL, rep.Pages[0].URL)
 	assert.Equal(t, 0, rep.Pages[0].Depth)
 	assert.Equal(t, []testBrokenLink{
-		{URL: srv.URL + "/broken", StatusCode: http.StatusNotFound},
+		{URL: srv.URL + "/broken", StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
 	}, rep.Pages[0].BrokenLinks)
 
 	assert.Equal(t, srv.URL+"/working", rep.Pages[1].URL)
@@ -262,38 +276,37 @@ func TestAnalyzeBrokenLinkTags(t *testing.T) {
 	require.NoError(t, err)
 
 	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 5)
+	require.Len(t, rep.Pages, 2)
 
 	assert.Equal(t, srv.URL, rep.Pages[0].URL)
 	assert.Equal(t, 0, rep.Pages[0].Depth)
-	assert.Equal(t, []testBrokenLink{
-		{URL: srv.URL + "/assets/ghost.css", StatusCode: http.StatusNotFound},
-		{URL: srv.URL + "/assets/missing.png", StatusCode: http.StatusNotFound},
-	}, rep.Pages[0].BrokenLinks)
+	assert.Empty(t, rep.Pages[0].BrokenLinks)
+	assert.Equal(t, []testAsset{
+		{
+			URL:        srv.URL + "/assets/ghost.css",
+			Type:       "other",
+			StatusCode: http.StatusNotFound,
+			Error:      http.StatusText(http.StatusNotFound),
+		},
+		{
+			URL:        srv.URL + "/assets/app.js",
+			Type:       "script",
+			StatusCode: http.StatusOK,
+		},
+		{
+			URL:        srv.URL + "/assets/missing.png",
+			Type:       "image",
+			StatusCode: http.StatusNotFound,
+			Error:      http.StatusText(http.StatusNotFound),
+		},
+	}, rep.Pages[0].Assets)
 
-	assert.Equal(t, srv.URL+"/assets/ghost.css", rep.Pages[1].URL)
+	assert.Equal(t, srv.URL+"/working", rep.Pages[1].URL)
 	assert.Equal(t, 1, rep.Pages[1].Depth)
-	assert.Equal(t, http.StatusNotFound, rep.Pages[1].HTTPStatus)
-	assert.Equal(t, "error", rep.Pages[1].Status)
+	assert.Equal(t, http.StatusOK, rep.Pages[1].HTTPStatus)
+	assert.Equal(t, "ok", rep.Pages[1].Status)
 	assert.Empty(t, rep.Pages[1].BrokenLinks)
-
-	assert.Equal(t, srv.URL+"/working", rep.Pages[2].URL)
-	assert.Equal(t, 1, rep.Pages[2].Depth)
-	assert.Equal(t, http.StatusOK, rep.Pages[2].HTTPStatus)
-	assert.Equal(t, "ok", rep.Pages[2].Status)
-	assert.Empty(t, rep.Pages[2].BrokenLinks)
-
-	assert.Equal(t, srv.URL+"/assets/app.js", rep.Pages[3].URL)
-	assert.Equal(t, 1, rep.Pages[3].Depth)
-	assert.Equal(t, http.StatusOK, rep.Pages[3].HTTPStatus)
-	assert.Equal(t, "ok", rep.Pages[3].Status)
-	assert.Empty(t, rep.Pages[3].BrokenLinks)
-
-	assert.Equal(t, srv.URL+"/assets/missing.png", rep.Pages[4].URL)
-	assert.Equal(t, 1, rep.Pages[4].Depth)
-	assert.Equal(t, http.StatusNotFound, rep.Pages[4].HTTPStatus)
-	assert.Equal(t, "error", rep.Pages[4].Status)
-	assert.Empty(t, rep.Pages[4].BrokenLinks)
+	assert.Empty(t, rep.Pages[1].Assets)
 }
 
 func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
@@ -328,7 +341,7 @@ func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
 	assert.Equal(t, srv.URL, rep.Pages[0].URL)
 	assert.Equal(t, 0, rep.Pages[0].Depth)
 	assert.Equal(t, []testBrokenLink{
-		{URL: srv.URL + "/broken", StatusCode: http.StatusNotFound},
+		{URL: srv.URL + "/broken", StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
 	}, rep.Pages[0].BrokenLinks)
 
 	assert.Equal(t, srv.URL+"/broken", rep.Pages[1].URL)
@@ -378,11 +391,14 @@ func TestAnalyzeBrokenLinkNetworkError(t *testing.T) {
 
 	assert.Equal(t, exampleURL+"/", rep.Pages[0].URL)
 	assert.Equal(t, 0, rep.Pages[0].Depth)
-	require.Len(t, rep.Pages[0].BrokenLinks, 1)
+	assert.Empty(t, rep.Pages[0].BrokenLinks)
+	require.Len(t, rep.Pages[0].Assets, 1)
 
-	got := rep.Pages[0].BrokenLinks[0]
+	got := rep.Pages[0].Assets[0]
 	assert.Equal(t, "https://cdn.invalid/app.js", got.URL)
+	assert.Equal(t, "script", got.Type)
 	assert.Zero(t, got.StatusCode)
+	assert.Zero(t, got.SizeBytes)
 	assert.Contains(t, got.Error, "connection failed")
 
 	assert.Equal(t, exampleURL+"/ok", rep.Pages[1].URL)

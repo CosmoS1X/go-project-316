@@ -10,33 +10,43 @@ import (
 
 const retryDelay = 100 * time.Millisecond
 
-func (c *crawler) fetch(
-	ctx context.Context,
-	rawURL string,
-	readBody bool,
-) (statusCode int, body []byte, err error) {
+type fetchMode int
+
+const (
+	fetchStatusOnly fetchMode = iota
+	fetchFullBody
+	fetchAssetMeta
+)
+
+type fetchResult struct {
+	StatusCode int
+	Body       []byte
+	Size       int64
+	Err        error
+}
+
+func (c *crawler) fetch(ctx context.Context, rawURL string, mode fetchMode) fetchResult {
+	var result fetchResult
 	for attemptIndex := 0; ; attemptIndex++ {
 		var retryable bool
-		statusCode, body, retryable, err = c.attempt(ctx, rawURL, readBody)
+		result, retryable = c.attempt(ctx, rawURL, mode)
 
 		if !retryable || ctx.Err() != nil || attemptIndex >= c.opts.Retries {
-			return statusCode, body, err
+			return result
 		}
 
 		if waitErr := waitForRetry(ctx); waitErr != nil {
-			return statusCode, nil, waitErr
+			result.Body = nil
+			result.Err = waitErr
+			return result
 		}
 	}
 }
 
-func (c *crawler) attempt(
-	ctx context.Context,
-	rawURL string,
-	readBody bool,
-) (statusCode int, body []byte, retryable bool, err error) {
+func (c *crawler) attempt(ctx context.Context, rawURL string, mode fetchMode) (fetchResult, bool) {
 	if c.limiter != nil {
 		if waitErr := c.limiter.Wait(ctx); waitErr != nil {
-			return 0, nil, false, waitErr
+			return fetchResult{Err: waitErr}, false
 		}
 	}
 
@@ -49,7 +59,7 @@ func (c *crawler) attempt(
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
-		return 0, nil, false, fmt.Errorf("build request: %w", err)
+		return fetchResult{Err: fmt.Errorf("build request: %w", err)}, false
 	}
 	if c.opts.UserAgent != "" {
 		req.Header.Set("User-Agent", c.opts.UserAgent)
@@ -57,19 +67,46 @@ func (c *crawler) attempt(
 
 	resp, err := c.opts.HTTPClient.Do(req)
 	if err != nil {
-		return 0, nil, true, err
+		return fetchResult{Err: err}, true
 	}
 	defer resp.Body.Close()
 
-	if !readBody {
-		return resp.StatusCode, nil, isTransientStatus(resp.StatusCode), nil
+	result := fetchResult{StatusCode: resp.StatusCode}
+	switch mode {
+	case fetchStatusOnly:
+	case fetchFullBody:
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fetchResult{StatusCode: resp.StatusCode, Err: fmt.Errorf("read body: %w", readErr)}, true
+		}
+		result.Body = body
+		result.Size = int64(len(body))
+	case fetchAssetMeta:
+		result.Size = assetSize(resp)
+		if resp.ContentLength < 0 && resp.StatusCode < http.StatusBadRequest {
+			size, readErr := io.Copy(io.Discard, resp.Body)
+			if readErr != nil {
+				return fetchResult{StatusCode: resp.StatusCode, Err: fmt.Errorf("read body: %w", readErr)}, true
+			}
+			result.Size = size
+		}
 	}
 
-	body, err = io.ReadAll(resp.Body)
-	if err != nil {
-		return resp.StatusCode, nil, true, fmt.Errorf("read body: %w", err)
+	return result, isTransientStatus(resp.StatusCode)
+}
+
+func assetSize(resp *http.Response) int64 {
+	if resp.ContentLength >= 0 {
+		return resp.ContentLength
 	}
-	return resp.StatusCode, body, isTransientStatus(resp.StatusCode), nil
+	return 0
+}
+
+func statusErrorText(statusCode int) string {
+	if text := http.StatusText(statusCode); text != "" {
+		return text
+	}
+	return fmt.Sprintf("unexpected http status: %d", statusCode)
 }
 
 func isTransientStatus(statusCode int) bool {

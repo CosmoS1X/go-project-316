@@ -13,7 +13,8 @@
 - В продакшен-коде `main` создаёт стандартный `&http.Client{}`; тесты передают
   тестовый клиент (`httptest` / кастомный `http.RoundTripper`).
 - `Analyze(ctx, Options)` — тонкая точка входа: валидация, запуск обхода, сериализация.
-  Состояние обхода (`opts`, `limiter`) живёт в структуре `crawler`; `visited` — локальная карта в `Run`.
+  Состояние обхода (`opts`, `limiter`, `assetCache`) живёт в структуре `crawler`;
+  `visited` — локальная карта в `Run`.
 - Тесты — во внешних пакетах `_test` (включён линтер `testpackage`), на `testify`:
   `require` для обязательных проверок, `assert` для остальных.
 - Стремиться к максимальному покрытию, включая негативные сценарии и обработку ошибок.
@@ -53,10 +54,12 @@
 │   ├── analyze.go           # Analyze(ctx, Options) ([]byte, error)
 │   ├── options.go           # Options, sentinel-ошибки, валидация
 │   ├── crawler.go           # структура обхода, Run/visit, BFS
-│   ├── fetch.go             # fetch/attempt, повторы, rate limiting и timeout попытки
-│   ├── links.go             # извлечение ссылок и проверка битых ссылок
+│   ├── fetch.go             # fetch/attempt, режимы чтения, расчёт размера ассета, повторы, rate limiting и timeout попытки
+│   ├── links.go             # типизированное извлечение ссылок и проверка битых ссылок
+│   ├── assets.go            # проверка ассетов, размеры и кэш
 │   ├── seo.go               # SEO-метрики: title, description, h1
-│   ├── report.go            # типы отчёта и SEO, JSON-сериализация
+│   ├── report.go            # типы отчёта, SEO и ассетов, JSON-сериализация
+│   ├── testdata/            # HTML- и JSON-фикстуры
 │   └── *_test.go
 ├── Makefile
 ├── .gitignore
@@ -101,22 +104,33 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
       "depth": 0,
       "http_status": 200,
       "status": "ok",
+      "error": "",
       "seo": {
         "has_title": true,
         "title": "Example Test",
-        "has_description": false,
-        "description": "",
+        "has_description": true,
+        "description": "A description",
         "has_h1": true
       },
-      "error": "",
       "broken_links": [
         {
-          "url": "https://example.com/assets/ghost.css",
-          "status_code": 404
+          "url": "https://example.com/missing",
+          "status_code": 404,
+          "error": "Not Found"
         },
         {
-          "url": "https://cdn.example.com/app.js",
-          "error": "Get \"https://cdn.example.com/app.js\": dial tcp: lookup cdn.example.com: no such host"
+          "url": "https://offline.example/page",
+          "status_code": 0,
+          "error": "Get \"https://offline.example/page\": dial tcp: lookup offline.example: no such host"
+        }
+      ],
+      "assets": [
+        {
+          "url": "https://example.com/static/logo.png",
+          "type": "image",
+          "status_code": 200,
+          "size_bytes": 12345,
+          "error": ""
         }
       ],
       "discovered_at": "2026-10-22T12:00:00Z"
@@ -125,8 +139,9 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 }
 ```
 
-- `generated_at` — UTC с точностью до секунды.
-- `discovered_at` — UTC с точностью до секунды.
+- Все ключи обязательны; пустые строки допустимы, но ключ не опускается.
+- `generated_at` — UTC с точностью до секунды, формат ISO8601/RFC3339.
+- `discovered_at` — UTC с точностью до секунды, формат ISO8601/RFC3339.
 - `status`: `ok`, если запрос успешен и HTTP < 400; иначе `error`.
 - `http_status`: 0, если ответ не получен; при ошибке чтения тела сохраняется полученный код ответа.
 - `seo` — базовые SEO-метрики страницы: `has_title`/`title`, `has_description`/`description`, `has_h1`.
@@ -134,11 +149,16 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 - Текст `title` и `description` — очищенный (лишние пробелы схлопнуты) и с раскодированными HTML-сущностями.
 - SEO вычисляется для успешно загруженных страниц; при сетевой или HTTP-ошибке блок `seo` остаётся нулевым.
 - `error`: пустая строка при успехе.
-- `broken_links` — всегда массив; содержит только ссылки с HTTP 4xx/5xx или сетевой ошибкой.
-- Для HTTP-ошибки заполняется `status_code`, для сетевой — `error`.
-- URL в `broken_links` абсолютный.
-- Проверяются `a[href]`, `link[href]`, `script[src]`, `img[src]`.
+- `broken_links` — всегда массив; содержит только навигационные ссылки `a[href]` с HTTP 4xx/5xx или сетевой ошибкой.
+- Для HTTP-ошибки заполняются `status_code` и `error` (текст статуса, например `"Not Found"`), для сетевой — `status_code: 0` и текст ошибки.
+- `assets` — всегда массив; содержит `img[src]`, `script[src]`, `link[href]`.
+- `type`: `image`, `script`, `style` (для `link[rel~="stylesheet"]`) или `other` для остальных `link`.
+- `size_bytes`: из `Content-Length`, если он есть; иначе по фактически прочитанному телу. Если размер определить нельзя — 0 и причина в `error`.
+- HTTP-ошибка ассета: заполняются `status_code` и `error` (текст статуса), `size_bytes` — из `Content-Length` или 0.
+- Ассеты кэшируются на время запуска по абсолютному URL без fragment: повторный ассет не запрашивается снова, а его данные в отчётах совпадают.
+- URL в `broken_links` и `assets` абсолютный.
 - Пустые значения, `#...`, не-HTTP(S) схемы, URL без host и невалидные URL игнорируются.
+- `IndentJSON` влияет только на форматирование (пробелы/переносы), но не на состав и порядок ключей.
 
 ## CLI
 
@@ -160,12 +180,14 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 
 `Retries` задаёт максимальное число повторных попыток (всего до `Retries + 1` запросов). Повторяются только временные сбои: сетевые ошибки, `429` и `5xx`; успех прекращает повторы. Перед каждой повторной попыткой выдерживается ненулевая пауза, прерываемая отменой контекста. В отчёт попадает результат последней попытки.
 
+CLI печатает отчёт без изменений: ровно JSON и один завершающий перевод строки, без текста до или после.
+
 ## Роадмап
 
 1. **Сделано:** черновик отчёта, `make run URL=...`, инъекция клиента, код 0 при сетевых ошибках, тесты на `testify`.
 2. **Сделано:** Полный `Options` и CLI-флаги из таблицы.
 3. **Сделано:** per-request timeout, `User-Agent`, rate limiting (`golang.org/x/time/rate`) и повторные попытки (`Retries`) для временных ошибок с ненулевой паузой между попытками.
-4. **Сделано:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img`, проверка битых ссылок, BFS с `visited`, обход по глубине с ограничением по `Depth`, фильтрация по домену, дедупликация.
+4. **Сделано:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img`, проверка битых навигационных ссылок, BFS с `visited` только по `a[href]`, обход по глубине с ограничением по `Depth`, фильтрация по домену, дедупликация.
 5. **Частично:** параллельный обход (`Concurrency`/`--workers`): поля и флаг добавлены, но пока не используются.
 6. **Частично:** SEO-метрики `title`, `description`, `h1` реализованы. Осталось: canonical и т.п.
-7. Расширение тестов и финальная проверка линтером.
+7. **Сделано:** проверка ассетов (`img`, `script`, `link`): тип, HTTP-статус, размер, ошибка; кэш по URL на время запуска.
