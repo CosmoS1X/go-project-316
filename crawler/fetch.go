@@ -25,11 +25,11 @@ type fetchResult struct {
 	Err        error
 }
 
-func (c *crawler) fetch(ctx context.Context, rawURL string, mode fetchMode) fetchResult {
+func (c *crawler) fetch(ctx context.Context, method, rawURL string, mode fetchMode) fetchResult {
 	var result fetchResult
 	for attemptIndex := 0; ; attemptIndex++ {
 		var retryable bool
-		result, retryable = c.attempt(ctx, rawURL, mode)
+		result, retryable = c.attempt(ctx, method, rawURL, mode)
 
 		if !retryable || ctx.Err() != nil || attemptIndex >= c.opts.Retries {
 			return result
@@ -43,7 +43,11 @@ func (c *crawler) fetch(ctx context.Context, rawURL string, mode fetchMode) fetc
 	}
 }
 
-func (c *crawler) attempt(ctx context.Context, rawURL string, mode fetchMode) (fetchResult, bool) {
+func (c *crawler) attempt(
+	ctx context.Context,
+	method, rawURL string,
+	mode fetchMode,
+) (fetchResult, bool) {
 	if c.limiter != nil {
 		if waitErr := c.limiter.Wait(ctx); waitErr != nil {
 			return fetchResult{Err: waitErr}, false
@@ -57,7 +61,7 @@ func (c *crawler) attempt(ctx context.Context, rawURL string, mode fetchMode) (f
 		defer cancel()
 	}
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, http.NoBody)
+	req, err := http.NewRequestWithContext(reqCtx, method, rawURL, http.NoBody)
 	if err != nil {
 		return fetchResult{Err: fmt.Errorf("build request: %w", err)}, false
 	}
@@ -82,8 +86,8 @@ func (c *crawler) attempt(ctx context.Context, rawURL string, mode fetchMode) (f
 		result.Body = body
 		result.Size = int64(len(body))
 	case fetchAssetMeta:
-		result.Size = assetSize(resp)
-		if resp.ContentLength < 0 && resp.StatusCode < http.StatusBadRequest {
+		result.Size = resp.ContentLength
+		if method != http.MethodHead && resp.ContentLength < 0 {
 			size, readErr := io.Copy(io.Discard, resp.Body)
 			if readErr != nil {
 				return fetchResult{StatusCode: resp.StatusCode, Err: fmt.Errorf("read body: %w", readErr)}, true
@@ -93,13 +97,6 @@ func (c *crawler) attempt(ctx context.Context, rawURL string, mode fetchMode) (f
 	}
 
 	return result, isTransientStatus(resp.StatusCode)
-}
-
-func assetSize(resp *http.Response) int64 {
-	if resp.ContentLength >= 0 {
-		return resp.ContentLength
-	}
-	return 0
 }
 
 func statusErrorText(statusCode int) string {

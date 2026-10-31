@@ -1,10 +1,11 @@
 package crawler
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"net/url"
-	"strconv"
+	"slices"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -13,7 +14,7 @@ import (
 type crawler struct {
 	opts       Options
 	limiter    *rate.Limiter
-	assetCache map[string]asset
+	assetCache map[string]Asset
 }
 
 func newCrawler(opts Options) (*crawler, error) {
@@ -32,11 +33,11 @@ func newCrawler(opts Options) (*crawler, error) {
 	return &crawler{
 		opts:       opts,
 		limiter:    limiter,
-		assetCache: make(map[string]asset),
+		assetCache: make(map[string]Asset),
 	}, nil
 }
 
-func (c *crawler) Run(ctx context.Context) *report {
+func (c *crawler) Run(ctx context.Context) *Report {
 	generatedAt := time.Now().UTC().Truncate(time.Second)
 
 	rootURL := c.opts.URL
@@ -46,7 +47,7 @@ func (c *crawler) Run(ctx context.Context) *report {
 	}
 
 	visited := make(map[string]struct{})
-	pages := make([]page, 0)
+	pages := make([]Page, 0)
 
 	type queueItem struct {
 		url   string
@@ -76,11 +77,7 @@ func (c *crawler) Run(ctx context.Context) *report {
 			break
 		}
 
-		if current.depth >= c.opts.Depth {
-			continue
-		}
-
-		if p.Status != statusOK {
+		if current.depth+1 >= c.opts.Depth {
 			continue
 		}
 
@@ -88,8 +85,8 @@ func (c *crawler) Run(ctx context.Context) *report {
 			continue
 		}
 
-		base, err := url.Parse(current.url)
-		if err != nil {
+		base, parseErr := url.Parse(current.url)
+		if parseErr != nil {
 			continue
 		}
 
@@ -104,8 +101,8 @@ func (c *crawler) Run(ctx context.Context) *report {
 			if !ok {
 				continue
 			}
-			linkParsed, err := url.Parse(linkURL)
-			if err != nil {
+			linkParsed, parseErr := url.Parse(linkURL)
+			if parseErr != nil {
 				continue
 			}
 			if rootParsed.Host != "" && linkParsed.Host != rootParsed.Host {
@@ -127,7 +124,14 @@ func (c *crawler) Run(ctx context.Context) *report {
 		}
 	}
 
-	return &report{
+	slices.SortFunc(pages, func(a, b Page) int {
+		if compared := cmp.Compare(a.Depth, b.Depth); compared != 0 {
+			return compared
+		}
+		return cmp.Compare(a.URL, b.URL)
+	})
+
+	return &Report{
 		RootURL:     c.opts.URL,
 		Depth:       c.opts.Depth,
 		GeneratedAt: generatedAt,
@@ -135,32 +139,30 @@ func (c *crawler) Run(ctx context.Context) *report {
 	}
 }
 
-func (c *crawler) visit(ctx context.Context, rawURL string, depth int) (p page, body []byte) {
+func (c *crawler) visit(ctx context.Context, rawURL string, depth int) (p Page, body []byte) {
 	discoveredAt := time.Now().UTC().Truncate(time.Second)
-	result := c.fetch(ctx, rawURL, fetchFullBody)
+	result := c.fetch(ctx, http.MethodGet, rawURL, fetchFullBody)
 
-	p = page{
+	p = Page{
 		URL:          rawURL,
 		Depth:        depth,
 		HTTPStatus:   result.StatusCode,
 		Status:       statusOK,
-		BrokenLinks:  make([]brokenLink, 0),
-		Assets:       make([]asset, 0),
 		DiscoveredAt: discoveredAt,
 	}
-	switch {
-	case result.Err != nil:
+	if result.Err != nil {
 		p.Status = statusError
 		p.Error = result.Err.Error()
 		return p, nil
-	case result.StatusCode >= http.StatusBadRequest:
-		p.Status = statusError
-		p.Error = "unexpected http status: " + strconv.Itoa(result.StatusCode)
-		return p, nil
-	default:
-		p.SEO = extractSEO(result.Body)
-		p.Assets = c.collectAssets(ctx, rawURL, result.Body)
-		p.BrokenLinks = c.findBrokenLinks(ctx, rawURL, result.Body)
-		return p, result.Body
 	}
+
+	if result.StatusCode >= http.StatusBadRequest {
+		p.Status = statusError
+		p.Error = statusErrorText(result.StatusCode)
+	}
+
+	p.SEO = extractSEO(result.Body)
+	p.Assets = c.collectAssets(ctx, rawURL, result.Body)
+	p.BrokenLinks = c.findBrokenLinks(ctx, rawURL, depth, result.Body)
+	return p, result.Body
 }

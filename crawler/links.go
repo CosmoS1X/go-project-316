@@ -31,14 +31,20 @@ type extractedLink struct {
 	Kind linkKind
 }
 
-func (c *crawler) findBrokenLinks(ctx context.Context, pageURL string, body []byte) []brokenLink {
+func (c *crawler) findBrokenLinks(ctx context.Context, pageURL string, depth int, body []byte) []BrokenLink {
 	base, err := url.Parse(pageURL)
 	if err != nil {
-		return []brokenLink{}
+		return []BrokenLink{}
+	}
+
+	root, err := url.Parse(c.opts.URL)
+	if err != nil {
+		return []BrokenLink{}
 	}
 
 	rawLinks := extractLinks(body)
-	broken := make([]brokenLink, 0, len(rawLinks))
+	broken := make([]BrokenLink, 0, len(rawLinks))
+	canSchedule := depth+1 < c.opts.Depth
 	for _, link := range rawLinks {
 		if link.Kind != linkNavigation {
 			continue
@@ -48,20 +54,48 @@ func (c *crawler) findBrokenLinks(ctx context.Context, pageURL string, body []by
 		if !ok {
 			continue
 		}
+		linkParsed, err := url.Parse(linkURL)
+		if err != nil {
+			continue
+		}
+		if canonicalURL(linkParsed) == canonicalURL(base) {
+			continue
+		}
 
-		result := c.fetch(ctx, linkURL, fetchStatusOnly)
-		switch {
-		case result.Err != nil:
-			broken = append(broken, brokenLink{URL: linkURL, Error: result.Err.Error()})
-		case result.StatusCode >= http.StatusBadRequest:
-			broken = append(broken, brokenLink{
-				URL:        linkURL,
-				StatusCode: result.StatusCode,
-				Error:      statusErrorText(result.StatusCode),
-			})
+		internal := linkParsed.Host == root.Host
+		if internal && canSchedule {
+			continue
+		}
+
+		item, isBroken := c.checkLink(ctx, linkURL)
+		if isBroken {
+			broken = append(broken, item)
 		}
 	}
 	return broken
+}
+
+func (c *crawler) checkLink(ctx context.Context, linkURL string) (BrokenLink, bool) {
+	result := c.fetch(ctx, http.MethodHead, linkURL, fetchStatusOnly)
+	if result.Err != nil {
+		return BrokenLink{URL: linkURL, Error: result.Err.Error()}, true
+	}
+
+	if result.StatusCode == http.StatusMethodNotAllowed {
+		result = c.fetch(ctx, http.MethodGet, linkURL, fetchStatusOnly)
+		if result.Err != nil {
+			return BrokenLink{URL: linkURL, Error: result.Err.Error()}, true
+		}
+	}
+
+	if result.StatusCode >= http.StatusBadRequest {
+		return BrokenLink{
+			URL:        linkURL,
+			StatusCode: result.StatusCode,
+			Error:      statusErrorText(result.StatusCode),
+		}, true
+	}
+	return BrokenLink{}, false
 }
 
 func extractLinks(body []byte) []extractedLink {
@@ -154,6 +188,8 @@ func resolveLink(base *url.URL, raw string) (string, bool) {
 	}
 
 	absolute := base.ResolveReference(ref)
+	absolute.Fragment = ""
+	absolute.RawFragment = ""
 	if absolute.Scheme != schemeHTTP && absolute.Scheme != schemeHTTPS {
 		return "", false
 	}
@@ -163,17 +199,22 @@ func resolveLink(base *url.URL, raw string) (string, bool) {
 	return absolute.String(), true
 }
 
+func canonicalURL(u *url.URL) string {
+	canonical := *u
+	canonical.Fragment = ""
+	canonical.RawFragment = ""
+	if canonical.Path == "" {
+		canonical.Path = "/"
+	} else if canonical.Path != "/" {
+		canonical.Path = strings.TrimSuffix(canonical.Path, "/")
+	}
+	return canonical.String()
+}
+
 func normalizeURLForKey(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
 	}
-	u.Fragment = ""
-	if u.Path != "/" && strings.HasSuffix(u.Path, "/") {
-		u.Path = strings.TrimSuffix(u.Path, "/")
-		if u.Path == "" {
-			u.Path = "/"
-		}
-	}
-	return u.String()
+	return canonicalURL(u)
 }

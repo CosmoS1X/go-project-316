@@ -12,29 +12,31 @@ const (
 	assetTypeImage  = "image"
 	assetTypeScript = "script"
 	assetTypeStyle  = "style"
-	assetTypeOther  = "other"
 )
 
-type report struct {
+// Report aggregates results for the entire crawl.
+type Report struct {
 	RootURL     string    `json:"root_url"`
 	Depth       int       `json:"depth"`
 	GeneratedAt time.Time `json:"generated_at"`
-	Pages       []page    `json:"pages"`
+	Pages       []Page    `json:"pages"`
 }
 
-type page struct {
+// Page stores per-page metrics.
+type Page struct {
 	URL          string       `json:"url"`
 	Depth        int          `json:"depth"`
 	HTTPStatus   int          `json:"http_status"`
 	Status       string       `json:"status"`
-	Error        string       `json:"error"`
-	SEO          seo          `json:"seo"`
-	BrokenLinks  []brokenLink `json:"broken_links"`
-	Assets       []asset      `json:"assets"`
+	Error        string       `json:"error,omitempty"`
+	SEO          SEO          `json:"seo"`
+	BrokenLinks  []BrokenLink `json:"broken_links"`
+	Assets       []Asset      `json:"assets"`
 	DiscoveredAt time.Time    `json:"discovered_at"`
 }
 
-type seo struct {
+// SEO collects basic SEO metrics for a page.
+type SEO struct {
 	HasTitle       bool   `json:"has_title"`
 	Title          string `json:"title"`
 	HasDescription bool   `json:"has_description"`
@@ -42,21 +44,23 @@ type seo struct {
 	HasH1          bool   `json:"has_h1"`
 }
 
-type brokenLink struct {
+// BrokenLink captures a failed navigation link check.
+type BrokenLink struct {
 	URL        string `json:"url"`
-	StatusCode int    `json:"status_code"`
-	Error      string `json:"error"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
-type asset struct {
+// Asset stores information about a static asset.
+type Asset struct {
 	URL        string `json:"url"`
 	Type       string `json:"type"`
-	StatusCode int    `json:"status_code"`
-	SizeBytes  int64  `json:"size_bytes"`
-	Error      string `json:"error"`
+	SizeBytes  int64  `json:"size_bytes,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
-func (r report) marshal(indent bool) ([]byte, error) {
+func (r Report) marshal(indent bool) ([]byte, error) {
 	if indent {
 		return json.MarshalIndent(r, "", "  ")
 	}

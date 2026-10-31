@@ -7,10 +7,11 @@ import (
 	"golang.org/x/net/html"
 )
 
-func extractSEO(body []byte) seo {
+func extractSEO(body []byte) SEO {
 	tokenizer := html.NewTokenizer(bytes.NewReader(body))
 	var (
-		result       seo
+		result       SEO
+		titleSeen    bool
 		titleDepth   int
 		titleBuilder strings.Builder
 	)
@@ -27,6 +28,10 @@ func extractSEO(body []byte) seo {
 			tagName, _ := tokenizer.TagName()
 			switch string(tagName) {
 			case "title":
+				if titleSeen {
+					continue
+				}
+				titleSeen = true
 				result.HasTitle = true
 				if tokenType == html.StartTagToken {
 					titleDepth++
