@@ -6,6 +6,12 @@ import (
 	"net/url"
 )
 
+const (
+	assetTypeImage  = "image"
+	assetTypeScript = "script"
+	assetTypeStyle  = "style"
+)
+
 func (c *crawler) collectAssets(ctx context.Context, pageURL string, body []byte) []Asset {
 	base, err := url.Parse(pageURL)
 	if err != nil {
@@ -90,7 +96,7 @@ func assetType(kind linkKind) string {
 		return assetTypeScript
 	case linkStyle:
 		return assetTypeStyle
-	case linkNavigation, linkOther:
+	case linkNavigation:
 		return ""
 	default:
 		return ""

@@ -23,7 +23,6 @@ const (
 	linkImage
 	linkScript
 	linkStyle
-	linkOther
 )
 
 type extractedLink struct {
@@ -166,9 +165,9 @@ func linkKindFor(tagName, rel string) (linkKind, bool) {
 		if hasRelToken(rel, "stylesheet") {
 			return linkStyle, true
 		}
-		return linkOther, true
+		return 0, false
 	default:
-		return linkOther, false
+		return 0, false
 	}
 }
 

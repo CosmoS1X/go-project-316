@@ -8,10 +8,6 @@ import (
 const (
 	statusOK    = "ok"
 	statusError = "error"
-
-	assetTypeImage  = "image"
-	assetTypeScript = "script"
-	assetTypeStyle  = "style"
 )
 
 // Report aggregates results for the entire crawl.
