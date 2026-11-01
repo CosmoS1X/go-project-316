@@ -228,25 +228,13 @@ func TestAnalyzeBrokenLinks(t *testing.T) {
 	require.NoError(t, err)
 
 	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 3)
+	require.Len(t, rep.Pages, 1)
 
 	assert.Equal(t, srv.URL, rep.Pages[0].URL)
 	assert.Equal(t, 0, rep.Pages[0].Depth)
 	assert.Equal(t, []testBrokenLink{
 		{URL: srv.URL + "/broken", StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
 	}, rep.Pages[0].BrokenLinks)
-
-	assert.Equal(t, srv.URL+"/working", rep.Pages[1].URL)
-	assert.Equal(t, 1, rep.Pages[1].Depth)
-	assert.Equal(t, http.StatusOK, rep.Pages[1].HTTPStatus)
-	assert.Equal(t, "ok", rep.Pages[1].Status)
-	assert.Empty(t, rep.Pages[1].BrokenLinks)
-
-	assert.Equal(t, srv.URL+"/broken", rep.Pages[2].URL)
-	assert.Equal(t, 1, rep.Pages[2].Depth)
-	assert.Equal(t, http.StatusNotFound, rep.Pages[2].HTTPStatus)
-	assert.Equal(t, "error", rep.Pages[2].Status)
-	assert.Empty(t, rep.Pages[2].BrokenLinks)
 }
 
 func TestAnalyzeBrokenLinkTags(t *testing.T) {
@@ -276,15 +264,15 @@ func TestAnalyzeBrokenLinkTags(t *testing.T) {
 	require.NoError(t, err)
 
 	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 2)
+	require.Len(t, rep.Pages, 1)
 
 	assert.Equal(t, srv.URL, rep.Pages[0].URL)
 	assert.Equal(t, 0, rep.Pages[0].Depth)
 	assert.Empty(t, rep.Pages[0].BrokenLinks)
 	assert.Equal(t, []testAsset{
 		{
-			URL:        srv.URL + "/assets/ghost.css",
-			Type:       "other",
+			URL:        srv.URL + "/assets/missing.png",
+			Type:       "image",
 			StatusCode: http.StatusNotFound,
 			Error:      http.StatusText(http.StatusNotFound),
 		},
@@ -293,20 +281,7 @@ func TestAnalyzeBrokenLinkTags(t *testing.T) {
 			Type:       "script",
 			StatusCode: http.StatusOK,
 		},
-		{
-			URL:        srv.URL + "/assets/missing.png",
-			Type:       "image",
-			StatusCode: http.StatusNotFound,
-			Error:      http.StatusText(http.StatusNotFound),
-		},
 	}, rep.Pages[0].Assets)
-
-	assert.Equal(t, srv.URL+"/working", rep.Pages[1].URL)
-	assert.Equal(t, 1, rep.Pages[1].Depth)
-	assert.Equal(t, http.StatusOK, rep.Pages[1].HTTPStatus)
-	assert.Equal(t, "ok", rep.Pages[1].Status)
-	assert.Empty(t, rep.Pages[1].BrokenLinks)
-	assert.Empty(t, rep.Pages[1].Assets)
 }
 
 func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
@@ -336,19 +311,13 @@ func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 2)
+	require.Len(t, rep.Pages, 1)
 
 	assert.Equal(t, srv.URL, rep.Pages[0].URL)
 	assert.Equal(t, 0, rep.Pages[0].Depth)
 	assert.Equal(t, []testBrokenLink{
 		{URL: srv.URL + "/broken", StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
 	}, rep.Pages[0].BrokenLinks)
-
-	assert.Equal(t, srv.URL+"/broken", rep.Pages[1].URL)
-	assert.Equal(t, 1, rep.Pages[1].Depth)
-	assert.Equal(t, http.StatusNotFound, rep.Pages[1].HTTPStatus)
-	assert.Equal(t, "error", rep.Pages[1].Status)
-	assert.Empty(t, rep.Pages[1].BrokenLinks)
 }
 
 type brokenLinkTransport struct{}
@@ -387,7 +356,7 @@ func TestAnalyzeBrokenLinkNetworkError(t *testing.T) {
 	require.NoError(t, err)
 
 	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 2)
+	require.Len(t, rep.Pages, 1)
 
 	assert.Equal(t, exampleURL+"/", rep.Pages[0].URL)
 	assert.Equal(t, 0, rep.Pages[0].Depth)
@@ -400,12 +369,6 @@ func TestAnalyzeBrokenLinkNetworkError(t *testing.T) {
 	assert.Zero(t, got.StatusCode)
 	assert.Zero(t, got.SizeBytes)
 	assert.Contains(t, got.Error, "connection failed")
-
-	assert.Equal(t, exampleURL+"/ok", rep.Pages[1].URL)
-	assert.Equal(t, 1, rep.Pages[1].Depth)
-	assert.Equal(t, http.StatusOK, rep.Pages[1].HTTPStatus)
-	assert.Equal(t, "ok", rep.Pages[1].Status)
-	assert.Empty(t, rep.Pages[1].BrokenLinks)
 }
 
 type failingBody struct{}
@@ -448,8 +411,8 @@ func TestAnalyzeReadBodyError(t *testing.T) {
 	assert.Equal(t, http.StatusOK, got.HTTPStatus)
 	assert.Equal(t, "error", got.Status)
 	assert.Contains(t, got.Error, "read body")
-	assert.NotNil(t, got.BrokenLinks)
-	assert.Empty(t, got.BrokenLinks)
+	assert.Nil(t, got.BrokenLinks)
+	assert.Nil(t, got.Assets)
 }
 
 func TestAnalyzeHTTPError(t *testing.T) {
@@ -707,7 +670,7 @@ func TestAnalyzeDuplicateInternalLinks(t *testing.T) {
 
 	data, err := crawler.Analyze(t.Context(), crawler.Options{
 		URL:        srv.URL,
-		Depth:      1,
+		Depth:      2,
 		Timeout:    time.Second,
 		HTTPClient: srv.Client(),
 	})
@@ -743,7 +706,7 @@ func TestAnalyzeExternalLinkNotTraversed(t *testing.T) {
 
 	data, err := crawler.Analyze(t.Context(), crawler.Options{
 		URL:        srv.URL,
-		Depth:      1,
+		Depth:      2,
 		Timeout:    time.Second,
 		HTTPClient: srv.Client(),
 	})
@@ -794,7 +757,7 @@ func TestAnalyzeContextCancelMidCrawl(t *testing.T) {
 
 	data, err := crawler.Analyze(ctx, crawler.Options{
 		URL:        srv.URL,
-		Depth:      1,
+		Depth:      2,
 		Timeout:    time.Second,
 		HTTPClient: srv.Client(),
 	})

@@ -21,7 +21,6 @@ const (
 	defaultTimeout   = 15 * time.Second
 	defaultRPS       = 0.0
 	defaultUserAgent = ""
-	defaultWorkers   = 4
 )
 
 // New builds the CLI command. The HTTP client is injected by the caller.
@@ -36,45 +35,46 @@ func New(client *http.Client) *cli.Command {
 		Flags: []cli.Flag{
 			&cli.IntFlag{
 				Name:  "depth",
+				Usage: "crawl depth",
 				Value: defaultDepth,
 			},
 			&cli.IntFlag{
 				Name:  "retries",
+				Usage: "number of retries for failed requests",
 				Value: defaultRetries,
 			},
 			&cli.DurationFlag{
 				Name:  "delay",
+				Usage: "delay between requests (example: 200ms, 1s)",
 				Value: defaultDelay,
 			},
 			&cli.DurationFlag{
 				Name:  "timeout",
+				Usage: "per-request timeout",
 				Value: defaultTimeout,
 			},
 			&cli.FloatFlag{
 				Name:  "rps",
+				Usage: "limit requests per second (overrides delay)",
 				Value: defaultRPS,
 			},
 			&cli.StringFlag{
 				Name:  "user-agent",
+				Usage: "custom user agent",
 				Value: defaultUserAgent,
-			},
-			&cli.IntFlag{
-				Name:  "workers",
-				Value: defaultWorkers,
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			opts := crawler.Options{
-				URL:         cmd.StringArg("url"),
-				Depth:       cmd.Int("depth"),
-				Retries:     cmd.Int("retries"),
-				Delay:       cmd.Duration("delay"),
-				Timeout:     cmd.Duration("timeout"),
-				RPS:         cmd.Float("rps"),
-				UserAgent:   cmd.String("user-agent"),
-				Concurrency: cmd.Int("workers"),
-				IndentJSON:  true,
-				HTTPClient:  client,
+				URL:        cmd.StringArg("url"),
+				Depth:      cmd.Int("depth"),
+				Retries:    cmd.Int("retries"),
+				Delay:      cmd.Duration("delay"),
+				Timeout:    cmd.Duration("timeout"),
+				RPS:        cmd.Float("rps"),
+				UserAgent:  cmd.String("user-agent"),
+				IndentJSON: true,
+				HTTPClient: client,
 			}
 
 			report, err := crawler.Analyze(ctx, opts)

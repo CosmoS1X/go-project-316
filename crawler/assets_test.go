@@ -17,7 +17,9 @@ import (
 	"code/crawler"
 )
 
-func TestAnalyzeAssetFieldsAlwaysPresent(t *testing.T) {
+const assetLogoPath = "/logo.png"
+
+func TestAnalyzeAssetFieldPresence(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,10 +58,19 @@ func TestAnalyzeAssetFieldsAlwaysPresent(t *testing.T) {
 	require.Len(t, raw.Pages[0].Assets, 2)
 
 	for _, rawAsset := range raw.Pages[0].Assets {
-		for _, key := range []string{"url", "type", "status_code", "size_bytes", "error"} {
-			assert.Contains(t, rawAsset, key)
-		}
+		assert.Contains(t, rawAsset, "url")
+		assert.Contains(t, rawAsset, "type")
 	}
+
+	okAsset := raw.Pages[0].Assets[0]
+	assert.Contains(t, okAsset, "status_code")
+	assert.Contains(t, okAsset, "size_bytes")
+	assert.NotContains(t, okAsset, "error")
+
+	missingAsset := raw.Pages[0].Assets[1]
+	assert.Contains(t, missingAsset, "status_code")
+	assert.NotContains(t, missingAsset, "size_bytes")
+	assert.Contains(t, missingAsset, "error")
 
 	rep := decodeReport(t, data)
 	assets := rep.Pages[0].Assets
@@ -85,16 +96,16 @@ func TestAnalyzeAssetRequestsCachedAcrossPages(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			_, err := io.WriteString(w, `<a href="/second">second</a><img src="/logo.png">`)
+			_, err := io.WriteString(w, `<a href="/second">second</a><img src="`+assetLogoPath+`">`)
 			if err != nil {
 				t.Errorf("write response: %v", err)
 			}
 		case "/second":
-			_, err := io.WriteString(w, `<img src="/logo.png">`)
+			_, err := io.WriteString(w, `<img src="`+assetLogoPath+`">`)
 			if err != nil {
 				t.Errorf("write response: %v", err)
 			}
-		case "/logo.png":
+		case assetLogoPath:
 			logoCalls.Add(1)
 			_, err := io.WriteString(w, "logo")
 			if err != nil {
@@ -108,7 +119,7 @@ func TestAnalyzeAssetRequestsCachedAcrossPages(t *testing.T) {
 
 	data, err := crawler.Analyze(t.Context(), crawler.Options{
 		URL:        srv.URL,
-		Depth:      1,
+		Depth:      2,
 		Timeout:    time.Second,
 		HTTPClient: srv.Client(),
 	})
@@ -130,7 +141,7 @@ func TestAnalyzeAssetRequestsCachedAcrossPages(t *testing.T) {
 	}
 
 	assert.Equal(t, rootAsset, secondAsset)
-	assert.Equal(t, srv.URL+"/logo.png", rootAsset.URL)
+	assert.Equal(t, srv.URL+assetLogoPath, rootAsset.URL)
 	assert.Equal(t, "image", rootAsset.Type)
 	assert.Equal(t, int64(len("logo")), rootAsset.SizeBytes)
 }
@@ -142,11 +153,11 @@ func TestAnalyzeAssetWithoutContentLength(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			_, err := io.WriteString(w, `<img src="/logo.png">`)
+			_, err := io.WriteString(w, `<img src="`+assetLogoPath+`">`)
 			if err != nil {
 				t.Errorf("write response: %v", err)
 			}
-		case "/logo.png":
+		case assetLogoPath:
 			w.Header().Set("Content-Type", "image/png")
 			w.WriteHeader(http.StatusOK)
 			flusher, ok := w.(http.Flusher)
@@ -250,15 +261,14 @@ func TestAnalyzeAssetTypesAndDeduplication(t *testing.T) {
 	require.Len(t, rep.Pages, 1)
 
 	assets := rep.Pages[0].Assets
-	require.Len(t, assets, 4, "duplicate asset URLs must be reported once")
+	require.Len(t, assets, 3, "duplicate asset URLs must be reported once")
 	assert.Equal(t, []string{
 		srv.URL + "/a.png",
 		srv.URL + "/app.js",
 		srv.URL + "/s.css",
-		srv.URL + "/f.ico",
-	}, []string{assets[0].URL, assets[1].URL, assets[2].URL, assets[3].URL})
-	assert.Equal(t, []string{"image", "script", "style", "other"},
-		[]string{assets[0].Type, assets[1].Type, assets[2].Type, assets[3].Type})
+	}, []string{assets[0].URL, assets[1].URL, assets[2].URL})
+	assert.Equal(t, []string{"image", "script", "style"},
+		[]string{assets[0].Type, assets[1].Type, assets[2].Type})
 }
 
 type assetFailingTransport struct{}

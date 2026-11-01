@@ -8,7 +8,6 @@
       "depth": 0,
       "http_status": 200,
       "status": "ok",
-      "error": "",
       "seo": {
         "has_title": true,
         "title": "Example title",
@@ -27,9 +26,8 @@
         {
           "url": "https://example.com/static/logo.png",
           "type": "image",
-          "status_code": 200,
           "size_bytes": 12345,
-          "error": ""
+          "status_code": 200
         }
       ],
       "discovered_at": "2024-06-01T12:34:56Z"
