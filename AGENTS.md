@@ -86,10 +86,9 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 - `Retries int`
 - `Delay time.Duration`
 - `UserAgent string`
-- `Concurrency int` (пока не используется)
 - `RPS float64` (приоритет над `Delay`)
 
-Валидация: отрицательные `Depth`, `Timeout`, `Retries`, `Delay`, `Concurrency`, `RPS` возвращают `ErrInvalidOptions`. `HTTPClient` обязателен, `URL` проверяется как HTTP(S).
+Валидация: отрицательные `Depth`, `Timeout`, `Retries`, `Delay`, `RPS` возвращают `ErrInvalidOptions`. `HTTPClient` обязателен, `URL` проверяется как HTTP(S).
 
 ## JSON-отчёт
 
@@ -169,28 +168,17 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 
 Флаги:
 
-| Флаг | Тип | По умолчанию |
-| --- | --- | --- |
-| `--depth` | int | 10 |
-| `--retries` | int | 1 |
-| `--delay` | duration | 0s |
-| `--timeout` | duration | 15s |
-| `--rps` | float | 0 |
-| `--user-agent` | string | "" |
-| `--workers` | int | 4 |
+| Флаг | Тип | По умолчанию | Описание |
+| --- | --- | --- | --- |
+| `--depth` | int | 10 | crawl depth |
+| `--retries` | int | 1 | number of retries for failed requests |
+| `--delay` | duration | 0s | delay between requests (example: 200ms, 1s) |
+| `--timeout` | duration | 15s | per-request timeout |
+| `--rps` | float | 0 | limit requests per second (overrides delay) |
+| `--user-agent` | string | "" | custom user agent |
 
-`--workers`/`Concurrency` пока не влияют на обход. `RPS` имеет приоритет над `Delay`. Глобальное ограничение частоты применяется ко всем HTTP-запросам: страницы, проверки ссылок и ассетов. `User-Agent` добавляется к запросам, если указан. При отмене контекста ожидание rate-лимитера прерывается без зависания.
+`RPS` имеет приоритет над `Delay`. Глобальное ограничение частоты применяется ко всем HTTP-запросам: страницы, проверки ссылок и ассетов. `User-Agent` добавляется к запросам, если указан. При отмене контекста ожидание rate-лимитера прерывается без зависания.
 
 `Retries` задаёт максимальное число повторных попыток (всего до `Retries + 1` запросов). Повторяются только временные сбои: сетевые ошибки, ошибки чтения тела, `429` и `5xx`; успех прекращает повторы. Перед каждой повторной попыткой выдерживается ненулевая пауза, прерываемая отменой контекста. В отчёт попадает результат последней попытки.
 
 CLI печатает отчёт без изменений: ровно JSON и один завершающий перевод строки, без текста до или после.
-
-## Роадмап
-
-1. **Сделано:** черновик отчёта, `make run URL=...`, инъекция клиента, код 0 при сетевых ошибках, тесты на `testify`.
-2. **Сделано:** Полный `Options` и CLI-флаги из таблицы.
-3. **Сделано:** per-request timeout, `User-Agent`, rate limiting (`golang.org/x/time/rate`) и повторные попытки (`Retries`) для временных ошибок с ненулевой паузой между попытками.
-4. **Сделано:** извлечение ссылок (`golang.org/x/net/html`) из `a`, `link`, `script`, `img`, проверка битых навигационных ссылок, BFS с `visited` только по `a[href]`, обход по глубине с ограничением по `Depth`, фильтрация по домену, дедупликация.
-5. **Частично:** параллельный обход (`Concurrency`/`--workers`): поля и флаг добавлены, но пока не используются.
-6. **Частично:** SEO-метрики `title`, `description`, `h1` реализованы. Осталось: canonical и т.п.
-7. **Сделано:** проверка ассетов (`img`, `script`, `link[rel~="stylesheet"]`): тип, HTTP-статус, размер, ошибка; проверка через `HEAD` с fallback на `GET`; кэш по URL на время запуска.

@@ -39,6 +39,27 @@ func newTestCommand(client *http.Client) (*cli.Command, *bytes.Buffer) {
 	return cmd, buf
 }
 
+func TestHelpDescribesFlags(t *testing.T) {
+	t.Parallel()
+
+	cmd, buf := newTestCommand(&http.Client{})
+	cmd.ExitErrHandler = func(context.Context, *cli.Command, error) {}
+
+	require.NoError(t, cmd.Run(t.Context(), []string{commandName, "--help"}))
+
+	out := buf.String()
+	for _, want := range []string{
+		"crawl depth",
+		"number of retries for failed requests",
+		"delay between requests (example: 200ms, 1s)",
+		"per-request timeout",
+		"limit requests per second (overrides delay)",
+		"custom user agent",
+	} {
+		assert.Contains(t, out, want)
+	}
+}
+
 func TestRunPrintsReport(t *testing.T) {
 	t.Parallel()
 

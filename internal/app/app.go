@@ -35,26 +35,32 @@ func New(client *http.Client) *cli.Command {
 		Flags: []cli.Flag{
 			&cli.IntFlag{
 				Name:  "depth",
+				Usage: "crawl depth",
 				Value: defaultDepth,
 			},
 			&cli.IntFlag{
 				Name:  "retries",
+				Usage: "number of retries for failed requests",
 				Value: defaultRetries,
 			},
 			&cli.DurationFlag{
 				Name:  "delay",
+				Usage: "delay between requests (example: 200ms, 1s)",
 				Value: defaultDelay,
 			},
 			&cli.DurationFlag{
 				Name:  "timeout",
+				Usage: "per-request timeout",
 				Value: defaultTimeout,
 			},
 			&cli.FloatFlag{
 				Name:  "rps",
+				Usage: "limit requests per second (overrides delay)",
 				Value: defaultRPS,
 			},
 			&cli.StringFlag{
 				Name:  "user-agent",
+				Usage: "custom user agent",
 				Value: defaultUserAgent,
 			},
 		},
