@@ -21,7 +21,6 @@ const (
 	defaultTimeout   = 15 * time.Second
 	defaultRPS       = 0.0
 	defaultUserAgent = ""
-	defaultWorkers   = 4
 )
 
 // New builds the CLI command. The HTTP client is injected by the caller.
@@ -58,23 +57,18 @@ func New(client *http.Client) *cli.Command {
 				Name:  "user-agent",
 				Value: defaultUserAgent,
 			},
-			&cli.IntFlag{
-				Name:  "workers",
-				Value: defaultWorkers,
-			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			opts := crawler.Options{
-				URL:         cmd.StringArg("url"),
-				Depth:       cmd.Int("depth"),
-				Retries:     cmd.Int("retries"),
-				Delay:       cmd.Duration("delay"),
-				Timeout:     cmd.Duration("timeout"),
-				RPS:         cmd.Float("rps"),
-				UserAgent:   cmd.String("user-agent"),
-				Concurrency: cmd.Int("workers"),
-				IndentJSON:  true,
-				HTTPClient:  client,
+				URL:        cmd.StringArg("url"),
+				Depth:      cmd.Int("depth"),
+				Retries:    cmd.Int("retries"),
+				Delay:      cmd.Duration("delay"),
+				Timeout:    cmd.Duration("timeout"),
+				RPS:        cmd.Float("rps"),
+				UserAgent:  cmd.String("user-agent"),
+				IndentJSON: true,
+				HTTPClient: client,
 			}
 
 			report, err := crawler.Analyze(ctx, opts)
