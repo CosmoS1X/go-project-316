@@ -86,9 +86,10 @@ Sentinel-ошибки: `ErrInvalidURL`, `ErrNilHTTPClient`, `ErrInvalidOptions`.
 - `Retries int`
 - `Delay time.Duration`
 - `UserAgent string`
+- `Concurrency int` (зарезервировано, пока не влияет на обход)
 - `RPS float64` (приоритет над `Delay`)
 
-Валидация: отрицательные `Depth`, `Timeout`, `Retries`, `Delay`, `RPS` возвращают `ErrInvalidOptions`. `HTTPClient` обязателен, `URL` проверяется как HTTP(S).
+Валидация: отрицательные `Depth`, `Timeout`, `Retries`, `Delay`, `Concurrency`, `RPS` возвращают `ErrInvalidOptions`. `HTTPClient` обязателен, `URL` проверяется как HTTP(S).
 
 ## JSON-отчёт
 

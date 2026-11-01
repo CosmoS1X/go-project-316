@@ -577,6 +577,11 @@ func TestAnalyzeInvalidOptions(t *testing.T) {
 			wantErr: crawler.ErrInvalidOptions,
 		},
 		{
+			name:    "negative concurrency",
+			opts:    crawler.Options{URL: exampleURL, Concurrency: -1, HTTPClient: client},
+			wantErr: crawler.ErrInvalidOptions,
+		},
+		{
 			name:    "negative rps",
 			opts:    crawler.Options{URL: exampleURL, RPS: -1, HTTPClient: client},
 			wantErr: crawler.ErrInvalidOptions,
