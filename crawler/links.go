@@ -26,6 +26,18 @@ const (
 	linkStyle
 )
 
+type linkSpec struct {
+	attr string
+	kind linkKind
+}
+
+var linkSpecs = map[string]linkSpec{
+	"a":      {attr: "href", kind: linkNavigation},
+	"img":    {attr: "src", kind: linkImage},
+	"script": {attr: "src", kind: linkScript},
+	"link":   {attr: "href", kind: linkStyle},
+}
+
 type extractedLink struct {
 	URL  string
 	Kind linkKind
@@ -41,9 +53,6 @@ func (c *crawler) findBrokenLinks(
 	seen := make(map[string]struct{}, len(rawLinks))
 	canSchedule := depth+1 < c.opts.Depth
 	for _, link := range rawLinks {
-		if link.Kind != linkNavigation {
-			continue
-		}
 		if ctx.Err() != nil {
 			return broken
 		}
@@ -65,7 +74,7 @@ func (c *crawler) findBrokenLinks(
 			continue
 		}
 
-		item, isBroken := c.checkLink(ctx, linkKey)
+		item, isBroken := c.probeLink(ctx, linkURL)
 		if ctx.Err() != nil {
 			return broken
 		}
@@ -76,22 +85,18 @@ func (c *crawler) findBrokenLinks(
 	return broken
 }
 
-func (c *crawler) checkLink(ctx context.Context, linkURL string) (BrokenLink, bool) {
-	result := c.fetch(ctx, http.MethodHead, linkURL, fetchStatusOnly)
+func (c *crawler) probeLink(ctx context.Context, linkURL *url.URL) (BrokenLink, bool) {
+	rawURL := linkURL.String()
+	result := c.fetchWithGETFallback(ctx, rawURL, fetchStatusOnly, func(result fetchResult) bool {
+		return result.StatusCode == http.StatusMethodNotAllowed
+	})
 	if result.Err != nil {
-		return BrokenLink{URL: linkURL, Error: result.Err.Error()}, true
-	}
-
-	if result.StatusCode == http.StatusMethodNotAllowed {
-		result = c.fetch(ctx, http.MethodGet, linkURL, fetchStatusOnly)
-		if result.Err != nil {
-			return BrokenLink{URL: linkURL, Error: result.Err.Error()}, true
-		}
+		return BrokenLink{URL: rawURL, Error: result.Err.Error()}, true
 	}
 
 	if result.StatusCode >= http.StatusBadRequest {
 		return BrokenLink{
-			URL:        linkURL,
+			URL:        rawURL,
 			StatusCode: result.StatusCode,
 			Error:      statusErrorText(result.StatusCode),
 		}, true
@@ -113,9 +118,8 @@ func extractLinks(body []byte) []extractedLink {
 		}
 
 		tagName, _ := tokenizer.TagName()
-		tag := string(tagName)
-		attrName := linkAttribute(tag)
-		if attrName == "" {
+		spec, ok := linkSpecs[string(tagName)]
+		if !ok {
 			continue
 		}
 
@@ -123,7 +127,7 @@ func extractLinks(body []byte) []extractedLink {
 		for {
 			key, value, more := tokenizer.TagAttr()
 			switch string(key) {
-			case attrName:
+			case spec.attr:
 				rawURL = string(value)
 			case "rel":
 				rel = string(value)
@@ -136,40 +140,10 @@ func extractLinks(body []byte) []extractedLink {
 		if rawURL == "" {
 			continue
 		}
-		kind, ok := linkKindFor(tag, rel)
-		if !ok {
+		if spec.kind == linkStyle && !hasRelToken(rel, "stylesheet") {
 			continue
 		}
-		links = append(links, extractedLink{URL: rawURL, Kind: kind})
-	}
-}
-
-func linkAttribute(tagName string) string {
-	switch tagName {
-	case "a", "link":
-		return "href"
-	case "script", "img":
-		return "src"
-	default:
-		return ""
-	}
-}
-
-func linkKindFor(tagName, rel string) (linkKind, bool) {
-	switch tagName {
-	case "a":
-		return linkNavigation, true
-	case "img":
-		return linkImage, true
-	case "script":
-		return linkScript, true
-	case "link":
-		if hasRelToken(rel, "stylesheet") {
-			return linkStyle, true
-		}
-		return 0, false
-	default:
-		return 0, false
+		links = append(links, extractedLink{URL: rawURL, Kind: spec.kind})
 	}
 }
 

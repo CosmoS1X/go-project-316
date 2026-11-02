@@ -65,28 +65,30 @@ func New(client *http.Client) *cli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			opts := crawler.Options{
-				URL:        cmd.StringArg("url"),
-				Depth:      cmd.Int("depth"),
-				Retries:    cmd.Int("retries"),
-				Delay:      cmd.Duration("delay"),
-				Timeout:    cmd.Duration("timeout"),
-				RPS:        cmd.Float("rps"),
-				UserAgent:  cmd.String("user-agent"),
-				IndentJSON: true,
-				HTTPClient: client,
-			}
-
-			report, err := crawler.Analyze(ctx, opts)
+			report, err := crawler.Analyze(ctx, optionsFromCommand(cmd, client))
 			if err != nil {
 				return fmt.Errorf("analyze: %w", err)
 			}
 
-			_, err = fmt.Fprintln(cmd.Root().Writer, string(report))
-			if err != nil {
+			report = append(report, '\n')
+			if _, err := cmd.Root().Writer.Write(report); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
 			return nil
 		},
+	}
+}
+
+func optionsFromCommand(cmd *cli.Command, client *http.Client) crawler.Options {
+	return crawler.Options{
+		URL:        cmd.StringArg("url"),
+		Depth:      cmd.Int("depth"),
+		Retries:    cmd.Int("retries"),
+		Delay:      cmd.Duration("delay"),
+		Timeout:    cmd.Duration("timeout"),
+		RPS:        cmd.Float("rps"),
+		UserAgent:  cmd.String("user-agent"),
+		IndentJSON: true,
+		HTTPClient: client,
 	}
 }

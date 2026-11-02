@@ -96,10 +96,10 @@ func (c *crawler) Run(ctx context.Context) *Report {
 	}
 
 	slices.SortFunc(pages, func(a, b Page) int {
-		if compared := cmp.Compare(a.Depth, b.Depth); compared != 0 {
-			return compared
-		}
-		return cmp.Compare(a.URL, b.URL)
+		return cmp.Or(
+			cmp.Compare(a.Depth, b.Depth),
+			cmp.Compare(a.URL, b.URL),
+		)
 	})
 
 	return &Report{

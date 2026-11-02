@@ -29,7 +29,7 @@ func (c *crawler) fetch(ctx context.Context, method, rawURL string, mode fetchMo
 	var result fetchResult
 	for attemptIndex := 0; ; attemptIndex++ {
 		var retryable bool
-		result, retryable = c.attempt(ctx, method, rawURL, mode)
+		result, retryable = c.doRequest(ctx, method, rawURL, mode)
 
 		if !retryable || ctx.Err() != nil || attemptIndex >= c.opts.Retries {
 			return result
@@ -43,7 +43,22 @@ func (c *crawler) fetch(ctx context.Context, method, rawURL string, mode fetchMo
 	}
 }
 
-func (c *crawler) attempt(
+// fetchWithGETFallback probes a URL with HEAD and repeats the request with GET
+// when needsFallback reports that the HEAD response is not usable.
+func (c *crawler) fetchWithGETFallback(
+	ctx context.Context,
+	rawURL string,
+	mode fetchMode,
+	needsFallback func(fetchResult) bool,
+) fetchResult {
+	result := c.fetch(ctx, http.MethodHead, rawURL, mode)
+	if result.Err != nil || !needsFallback(result) {
+		return result
+	}
+	return c.fetch(ctx, http.MethodGet, rawURL, mode)
+}
+
+func (c *crawler) doRequest(
 	ctx context.Context,
 	method, rawURL string,
 	mode fetchMode,

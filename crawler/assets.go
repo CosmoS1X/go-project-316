@@ -18,27 +18,37 @@ type assetMeta struct {
 	Error      string
 }
 
+var assetKinds = []struct {
+	kind     linkKind
+	typeName string
+}{
+	{kind: linkImage, typeName: assetTypeImage},
+	{kind: linkScript, typeName: assetTypeScript},
+	{kind: linkStyle, typeName: assetTypeStyle},
+}
+
 func (c *crawler) collectAssets(ctx context.Context, pageURL *url.URL, rawLinks []extractedLink) []Asset {
+	byKind := make(map[linkKind][]extractedLink, len(assetKinds))
+	for _, link := range rawLinks {
+		byKind[link.Kind] = append(byKind[link.Kind], link)
+	}
+
 	seen := make(map[string]struct{}, len(rawLinks))
 	assets := make([]Asset, 0, len(rawLinks))
 
-	for _, kind := range []linkKind{linkImage, linkScript, linkStyle} {
-		for _, link := range rawLinks {
-			if link.Kind != kind {
-				continue
-			}
+	for _, assetKind := range assetKinds {
+		for _, link := range byKind[assetKind.kind] {
 			if ctx.Err() != nil {
 				return assets
 			}
 
-			typ := assetType(kind)
 			resolved, ok := resolveLink(pageURL, link.URL)
 			if !ok {
 				continue
 			}
 			assetURL := resolved.String()
 
-			key := typ + "::" + assetURL
+			key := assetKind.typeName + "::" + assetURL
 			if _, exists := seen[key]; exists {
 				continue
 			}
@@ -55,7 +65,7 @@ func (c *crawler) collectAssets(ctx context.Context, pageURL *url.URL, rawLinks 
 
 			assets = append(assets, Asset{
 				URL:        assetURL,
-				Type:       typ,
+				Type:       assetKind.typeName,
 				SizeBytes:  meta.SizeBytes,
 				StatusCode: meta.StatusCode,
 				Error:      meta.Error,
@@ -66,47 +76,23 @@ func (c *crawler) collectAssets(ctx context.Context, pageURL *url.URL, rawLinks 
 }
 
 func (c *crawler) fetchAsset(ctx context.Context, assetURL string) assetMeta {
-	var meta assetMeta
+	result := c.fetchWithGETFallback(ctx, assetURL, fetchAssetMeta, func(result fetchResult) bool {
+		return result.StatusCode == http.StatusMethodNotAllowed ||
+			(result.StatusCode < http.StatusBadRequest && result.Size < 0)
+	})
 
-	result := c.fetch(ctx, http.MethodHead, assetURL, fetchAssetMeta)
+	var meta assetMeta
 	if result.Err != nil {
 		meta.Error = result.Err.Error()
 		return meta
 	}
 
 	meta.StatusCode = result.StatusCode
-	if result.StatusCode == http.StatusMethodNotAllowed ||
-		(result.StatusCode < http.StatusBadRequest && result.Size < 0) {
-		result = c.fetch(ctx, http.MethodGet, assetURL, fetchAssetMeta)
-		if result.Err != nil {
-			meta.Error = result.Err.Error()
-			return meta
-		}
-		meta.StatusCode = result.StatusCode
-	}
-
-	switch {
-	case result.StatusCode >= http.StatusBadRequest:
+	if result.StatusCode >= http.StatusBadRequest {
 		meta.Error = statusErrorText(result.StatusCode)
-	case result.Size < 0:
-		meta.Error = "unknown content length"
-	default:
-		meta.SizeBytes = result.Size
+		return meta
 	}
-	return meta
-}
 
-func assetType(kind linkKind) string {
-	switch kind {
-	case linkImage:
-		return assetTypeImage
-	case linkScript:
-		return assetTypeScript
-	case linkStyle:
-		return assetTypeStyle
-	case linkNavigation:
-		return ""
-	default:
-		return ""
-	}
+	meta.SizeBytes = result.Size
+	return meta
 }
