@@ -31,17 +31,12 @@ type extractedLink struct {
 	Kind linkKind
 }
 
-func (c *crawler) findBrokenLinks(ctx context.Context, pageURL string, depth int, body []byte) []BrokenLink {
-	base, err := url.Parse(pageURL)
-	if err != nil {
-		return []BrokenLink{}
-	}
-
-	root, err := url.Parse(c.opts.URL)
-	if err != nil {
-		return []BrokenLink{}
-	}
-
+func (c *crawler) findBrokenLinks(
+	ctx context.Context,
+	pageURL *url.URL,
+	depth int,
+	body []byte,
+) []BrokenLink {
 	rawLinks := extractLinks(body)
 	broken := make([]BrokenLink, 0, len(rawLinks))
 	seen := make(map[string]struct{}, len(rawLinks))
@@ -54,28 +49,24 @@ func (c *crawler) findBrokenLinks(ctx context.Context, pageURL string, depth int
 			return broken
 		}
 
-		linkURL, ok := resolveLink(base, link.URL)
+		linkURL, ok := resolveLink(pageURL, link.URL)
 		if !ok {
 			continue
 		}
-		linkParsed, err := url.Parse(linkURL)
-		if err != nil {
+		if canonicalURL(linkURL) == canonicalURL(pageURL) {
 			continue
 		}
-		if canonicalURL(linkParsed) == canonicalURL(base) {
+		linkKey := linkURL.String()
+		if _, exists := seen[linkKey]; exists {
 			continue
 		}
-		if _, exists := seen[linkURL]; exists {
-			continue
-		}
-		seen[linkURL] = struct{}{}
+		seen[linkKey] = struct{}{}
 
-		internal := normalizedHost(linkParsed) == normalizedHost(root)
-		if internal && canSchedule {
+		if normalizedHost(linkURL) == normalizedHost(c.root) && canSchedule {
 			continue
 		}
 
-		item, isBroken := c.checkLink(ctx, linkURL)
+		item, isBroken := c.checkLink(ctx, linkKey)
 		if ctx.Err() != nil {
 			return broken
 		}
@@ -187,27 +178,27 @@ func hasRelToken(rel, token string) bool {
 	return slices.Contains(strings.Fields(strings.ToLower(rel)), token)
 }
 
-func resolveLink(base *url.URL, raw string) (string, bool) {
+func resolveLink(base *url.URL, raw string) (*url.URL, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || strings.HasPrefix(raw, "#") {
-		return "", false
+		return nil, false
 	}
 
 	ref, err := url.Parse(raw)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 
 	absolute := base.ResolveReference(ref)
 	absolute.Fragment = ""
 	absolute.RawFragment = ""
 	if absolute.Scheme != schemeHTTP && absolute.Scheme != schemeHTTPS {
-		return "", false
+		return nil, false
 	}
 	if absolute.Host == "" {
-		return "", false
+		return nil, false
 	}
-	return absolute.String(), true
+	return absolute, true
 }
 
 func canonicalURL(u *url.URL) string {
@@ -235,12 +226,4 @@ func normalizedHost(u *url.URL) string {
 		return host
 	}
 	return net.JoinHostPort(host, port)
-}
-
-func normalizeURLForKey(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	return canonicalURL(u)
 }

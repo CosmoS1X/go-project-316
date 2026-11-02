@@ -28,48 +28,48 @@ type Options struct {
 	RPS         float64
 }
 
-func (o Options) validate() error {
+func (o Options) validate() (*url.URL, error) {
 	if o.HTTPClient == nil {
-		return ErrNilHTTPClient
+		return nil, ErrNilHTTPClient
 	}
 	if o.Depth < 0 {
-		return fmt.Errorf("%w: depth must not be negative", ErrInvalidOptions)
+		return nil, fmt.Errorf("%w: depth must not be negative", ErrInvalidOptions)
 	}
 	if o.Timeout < 0 {
-		return fmt.Errorf("%w: timeout must not be negative", ErrInvalidOptions)
+		return nil, fmt.Errorf("%w: timeout must not be negative", ErrInvalidOptions)
 	}
 	if o.Retries < 0 {
-		return fmt.Errorf("%w: retries must not be negative", ErrInvalidOptions)
+		return nil, fmt.Errorf("%w: retries must not be negative", ErrInvalidOptions)
 	}
 	if o.Delay < 0 {
-		return fmt.Errorf("%w: delay must not be negative", ErrInvalidOptions)
+		return nil, fmt.Errorf("%w: delay must not be negative", ErrInvalidOptions)
 	}
 	if o.Concurrency < 0 {
-		return fmt.Errorf("%w: concurrency must not be negative", ErrInvalidOptions)
+		return nil, fmt.Errorf("%w: concurrency must not be negative", ErrInvalidOptions)
 	}
 	if math.IsNaN(o.RPS) || math.IsInf(o.RPS, 0) {
-		return fmt.Errorf("%w: rps must be finite", ErrInvalidOptions)
+		return nil, fmt.Errorf("%w: rps must be finite", ErrInvalidOptions)
 	}
 	if o.RPS < 0 {
-		return fmt.Errorf("%w: rps must not be negative", ErrInvalidOptions)
+		return nil, fmt.Errorf("%w: rps must not be negative", ErrInvalidOptions)
 	}
-	return validateURL(o.URL)
+	return parseURL(o.URL)
 }
 
-func validateURL(rawURL string) error {
+func parseURL(rawURL string) (*url.URL, error) {
 	if rawURL == "" {
-		return fmt.Errorf("%w: empty url", ErrInvalidURL)
+		return nil, fmt.Errorf("%w: empty url", ErrInvalidURL)
 	}
 
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidURL, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidURL, err)
 	}
 	if parsed.Scheme != schemeHTTP && parsed.Scheme != schemeHTTPS {
-		return fmt.Errorf("%w: unsupported scheme %q", ErrInvalidURL, parsed.Scheme)
+		return nil, fmt.Errorf("%w: unsupported scheme %q", ErrInvalidURL, parsed.Scheme)
 	}
 	if parsed.Host == "" {
-		return fmt.Errorf("%w: missing host", ErrInvalidURL)
+		return nil, fmt.Errorf("%w: missing host", ErrInvalidURL)
 	}
-	return nil
+	return parsed, nil
 }

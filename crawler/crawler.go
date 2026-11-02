@@ -13,12 +13,14 @@ import (
 
 type crawler struct {
 	opts       Options
+	root       *url.URL
 	limiter    *rate.Limiter
 	assetCache map[string]assetMeta
 }
 
 func newCrawler(opts Options) (*crawler, error) {
-	if err := opts.validate(); err != nil {
+	root, err := opts.validate()
+	if err != nil {
 		return nil, err
 	}
 
@@ -32,6 +34,7 @@ func newCrawler(opts Options) (*crawler, error) {
 
 	return &crawler{
 		opts:       opts,
+		root:       root,
 		limiter:    limiter,
 		assetCache: make(map[string]assetMeta),
 	}, nil
@@ -40,27 +43,17 @@ func newCrawler(opts Options) (*crawler, error) {
 func (c *crawler) Run(ctx context.Context) *Report {
 	generatedAt := time.Now().UTC().Truncate(time.Second)
 
-	rootURL := c.opts.URL
-	rootParsed, err := url.Parse(rootURL)
-	if err != nil {
-		rootParsed = &url.URL{}
-	}
-
 	visited := make(map[string]struct{})
 	pages := make([]Page, 0)
 
 	type queueItem struct {
-		url   string
+		url   *url.URL
 		depth int
 	}
 
 	queue := make([]queueItem, 0)
-	key0 := normalizeURLForKey(rootURL)
-	if key0 == "" {
-		key0 = rootURL
-	}
-	visited[key0] = struct{}{}
-	queue = append(queue, queueItem{url: rootURL, depth: 0})
+	visited[canonicalURL(c.root)] = struct{}{}
+	queue = append(queue, queueItem{url: c.root, depth: 0})
 
 	for len(queue) > 0 {
 		if ctx.Err() != nil {
@@ -85,11 +78,6 @@ func (c *crawler) Run(ctx context.Context) *Report {
 			continue
 		}
 
-		base, parseErr := url.Parse(current.url)
-		if parseErr != nil {
-			continue
-		}
-
 		for _, link := range extractLinks(body) {
 			if link.Kind != linkNavigation {
 				continue
@@ -97,25 +85,18 @@ func (c *crawler) Run(ctx context.Context) *Report {
 			if ctx.Err() != nil {
 				break
 			}
-			linkURL, ok := resolveLink(base, link.URL)
+			linkURL, ok := resolveLink(current.url, link.URL)
 			if !ok {
 				continue
 			}
-			linkParsed, parseErr := url.Parse(linkURL)
-			if parseErr != nil {
+			if c.root.Host != "" && normalizedHost(linkURL) != normalizedHost(c.root) {
 				continue
 			}
-			if rootParsed.Host != "" && normalizedHost(linkParsed) != normalizedHost(rootParsed) {
-				continue
-			}
-			if linkParsed.Scheme != schemeHTTP && linkParsed.Scheme != schemeHTTPS {
+			if linkURL.Scheme != schemeHTTP && linkURL.Scheme != schemeHTTPS {
 				continue
 			}
 
-			key := normalizeURLForKey(linkURL)
-			if key == "" {
-				continue
-			}
+			key := canonicalURL(linkURL)
 			if _, exists := visited[key]; exists {
 				continue
 			}
@@ -139,8 +120,9 @@ func (c *crawler) Run(ctx context.Context) *Report {
 	}
 }
 
-func (c *crawler) visit(ctx context.Context, rawURL string, depth int) (p Page, body []byte) {
+func (c *crawler) visit(ctx context.Context, pageURL *url.URL, depth int) (p Page, body []byte) {
 	discoveredAt := time.Now().UTC().Truncate(time.Second)
+	rawURL := pageURL.String()
 	result := c.fetch(ctx, http.MethodGet, rawURL, fetchFullBody)
 
 	p = Page{
@@ -162,7 +144,7 @@ func (c *crawler) visit(ctx context.Context, rawURL string, depth int) (p Page, 
 	}
 
 	p.SEO = extractSEO(result.Body)
-	p.Assets = c.collectAssets(ctx, rawURL, result.Body)
-	p.BrokenLinks = c.findBrokenLinks(ctx, rawURL, depth, result.Body)
+	p.Assets = c.collectAssets(ctx, pageURL, result.Body)
+	p.BrokenLinks = c.findBrokenLinks(ctx, pageURL, depth, result.Body)
 	return p, result.Body
 }

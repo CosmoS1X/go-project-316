@@ -18,12 +18,7 @@ type assetMeta struct {
 	Error      string
 }
 
-func (c *crawler) collectAssets(ctx context.Context, pageURL string, body []byte) []Asset {
-	base, err := url.Parse(pageURL)
-	if err != nil {
-		return []Asset{}
-	}
-
+func (c *crawler) collectAssets(ctx context.Context, pageURL *url.URL, body []byte) []Asset {
 	rawLinks := extractLinks(body)
 	seen := make(map[string]struct{}, len(rawLinks))
 	assets := make([]Asset, 0, len(rawLinks))
@@ -38,10 +33,11 @@ func (c *crawler) collectAssets(ctx context.Context, pageURL string, body []byte
 			}
 
 			typ := assetType(kind)
-			assetURL, ok := resolveLink(base, link.URL)
+			resolved, ok := resolveLink(pageURL, link.URL)
 			if !ok {
 				continue
 			}
+			assetURL := resolved.String()
 
 			key := typ + "::" + assetURL
 			if _, exists := seen[key]; exists {
