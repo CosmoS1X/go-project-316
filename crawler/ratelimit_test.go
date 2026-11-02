@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,121 +14,108 @@ import (
 	"code/crawler"
 )
 
-type timingTransport struct {
-	times []time.Time
+const rateLimitPageHTML = `<a href="https://one.example/a">a</a><a href="https://two.example/b">b</a>`
+
+type timedTransport struct {
+	mu        sync.Mutex
+	times     []time.Time
+	pageURL   string
+	pageHTML  string
+	onFirst   func()
+	firstOnce sync.Once
 }
 
-func (tr *timingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (tr *timedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	tr.mu.Lock()
 	tr.times = append(tr.times, time.Now())
-	return responseWithStatus(req, http.StatusOK, ""), nil
+	tr.mu.Unlock()
+
+	if tr.onFirst != nil {
+		tr.firstOnce.Do(tr.onFirst)
+	}
+	if req.URL.String() == tr.pageURL {
+		return testResponse(req, tr.pageHTML), nil
+	}
+	return testResponse(req, ""), nil
 }
 
-func TestAnalyzeWithDelay(t *testing.T) {
-	t.Parallel()
+func (tr *timedTransport) callTimes() []time.Time {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
 
-	tr := &timingTransport{}
-	data, err := crawler.Analyze(t.Context(), crawler.Options{
-		URL:        exampleURL + "/",
-		Depth:      0,
-		Timeout:    time.Second,
-		Delay:      50 * time.Millisecond,
-		HTTPClient: &http.Client{Transport: tr},
-	})
-	require.NoError(t, err)
-	require.True(t, json.Valid(data))
-	require.Len(t, tr.times, 1)
-
-	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
-	assert.Equal(t, exampleURL+"/", rep.Pages[0].URL)
-	assert.Equal(t, "ok", rep.Pages[0].Status)
+	return append([]time.Time(nil), tr.times...)
 }
 
-func TestAnalyzeWithRPS(t *testing.T) {
+func TestAnalyzeDelayEnforcesInterval(t *testing.T) {
 	t.Parallel()
 
-	tr := &timingTransport{}
-	data, err := crawler.Analyze(t.Context(), crawler.Options{
-		URL:        exampleURL + "/",
-		Depth:      0,
-		Timeout:    time.Second,
-		RPS:        10,
-		HTTPClient: &http.Client{Transport: tr},
-	})
-	require.NoError(t, err)
-	require.True(t, json.Valid(data))
-	require.Len(t, tr.times, 1)
-
-	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
-	assert.Equal(t, exampleURL+"/", rep.Pages[0].URL)
-	assert.Equal(t, "ok", rep.Pages[0].Status)
-}
-
-func TestAnalyzeRateLimitIntervals(t *testing.T) {
-	t.Parallel()
-
-	tr := &timingTransport{}
-	data, err := crawler.Analyze(t.Context(), crawler.Options{
+	tr := &timedTransport{pageURL: exampleURL + "/", pageHTML: rateLimitPageHTML}
+	_, err := crawler.Analyze(t.Context(), crawler.Options{
 		URL:        exampleURL + "/",
 		Depth:      1,
 		Timeout:    time.Second,
-		Delay:      40 * time.Millisecond,
+		Delay:      25 * time.Millisecond,
 		HTTPClient: &http.Client{Transport: tr},
 	})
 	require.NoError(t, err)
-	require.True(t, json.Valid(data))
 
-	require.GreaterOrEqual(t, len(tr.times), 1)
-
-	rep := decodeReport(t, data)
-	require.NotEmpty(t, rep.Pages)
-
-	if len(tr.times) >= 2 {
-		for i := 1; i < len(tr.times); i++ {
-			interval := tr.times[i].Sub(tr.times[i-1])
-			require.GreaterOrEqual(t, interval, 30*time.Millisecond)
-		}
+	times := tr.callTimes()
+	require.Len(t, times, 3, "root page plus two external link checks")
+	for i := 1; i < len(times); i++ {
+		assert.GreaterOrEqual(t, times[i].Sub(times[i-1]), 15*time.Millisecond,
+			"delay must space consecutive requests")
 	}
 }
 
-func TestAnalyzeRateLimitRPSPriority(t *testing.T) {
+func TestAnalyzeRPSOverridesDelay(t *testing.T) {
 	t.Parallel()
 
-	tr := &timingTransport{}
-	data, err := crawler.Analyze(t.Context(), crawler.Options{
+	tr := &timedTransport{pageURL: exampleURL + "/", pageHTML: rateLimitPageHTML}
+	startedAt := time.Now()
+	_, err := crawler.Analyze(t.Context(), crawler.Options{
 		URL:        exampleURL + "/",
-		Depth:      0,
+		Depth:      1,
 		Timeout:    time.Second,
-		RPS:        5,
-		Delay:      time.Hour, // Delay should be ignored when RPS > 0
+		RPS:        1000,
+		Delay:      time.Second,
 		HTTPClient: &http.Client{Transport: tr},
 	})
+	elapsed := time.Since(startedAt)
 	require.NoError(t, err)
-	require.True(t, json.Valid(data))
-	require.Len(t, tr.times, 1)
+
+	require.Len(t, tr.callTimes(), 3)
+	assert.Less(t, elapsed, 500*time.Millisecond, "Delay must be ignored when RPS is set")
 }
 
 func TestAnalyzeRateLimitContextCancel(t *testing.T) {
 	t.Parallel()
 
-	tr := &timingTransport{}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		cancel()
-	}()
+	tr := &timedTransport{
+		pageURL:  exampleURL + "/",
+		pageHTML: `<a href="https://offline.example/page">offline</a>`,
+		onFirst: func() {
+			time.AfterFunc(50*time.Millisecond, cancel)
+		},
+	}
 
+	startedAt := time.Now()
 	data, err := crawler.Analyze(ctx, crawler.Options{
 		URL:        exampleURL + "/",
-		Depth:      0,
+		Depth:      1,
 		Timeout:    time.Second,
-		Delay:      time.Second, // long delay
+		Delay:      time.Second,
 		HTTPClient: &http.Client{Transport: tr},
 	})
-	if err != nil {
-		return
-	}
+	elapsed := time.Since(startedAt)
+	require.NoError(t, err)
 	require.True(t, json.Valid(data))
+	assert.Less(t, elapsed, 800*time.Millisecond, "cancellation must interrupt the limiter wait")
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Empty(t, rep.Pages[0].BrokenLinks)
+	assert.NotContains(t, string(data), context.Canceled.Error())
 }

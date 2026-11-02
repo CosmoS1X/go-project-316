@@ -18,13 +18,12 @@ func extractSEO(body []byte) SEO {
 
 	for {
 		tokenType := tokenizer.Next()
-		if tokenType == html.ErrorToken {
+		switch tokenType {
+		case html.ErrorToken:
 			result.Title = cleanText(titleBuilder.String())
 			result.Description = cleanText(result.Description)
 			return result
-		}
-
-		if tokenType == html.StartTagToken || tokenType == html.SelfClosingTagToken {
+		case html.StartTagToken, html.SelfClosingTagToken:
 			tagName, _ := tokenizer.TagName()
 			switch string(tagName) {
 			case "title":
@@ -44,21 +43,16 @@ func extractSEO(body []byte) SEO {
 					result.Description = description
 				}
 			}
-			continue
-		}
-
-		if tokenType == html.TextToken {
+		case html.TextToken:
 			if titleDepth > 0 {
 				titleBuilder.Write(tokenizer.Text())
 			}
-			continue
-		}
-
-		if tokenType == html.EndTagToken {
+		case html.EndTagToken:
 			tagName, _ := tokenizer.TagName()
 			if string(tagName) == "title" && titleDepth > 0 {
 				titleDepth--
 			}
+		case html.CommentToken, html.DoctypeToken:
 		}
 	}
 }

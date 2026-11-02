@@ -308,3 +308,43 @@ func TestAnalyzeHostComparisonNormalized(t *testing.T) {
 	assert.Zero(t, tr.upperHeadCalls.Load(), "internal link with uppercase host must not be probed")
 	assert.Zero(t, tr.portHeadCalls.Load(), "internal link with default port must not be probed")
 }
+
+type ipv6Transport struct {
+	internalHeadCalls atomic.Int32
+}
+
+func (tr *ipv6Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	host := strings.ToLower(req.URL.Hostname())
+	switch {
+	case host == "::1" && (req.URL.Path == "" || req.URL.Path == "/"):
+		return testResponse(req, `<a href="/page">page</a><a href="http://[::1]:80/port">port</a><a href="http://external.example/x">ext</a>`), nil
+	case host == "::1" && (req.URL.Path == pagePath || req.URL.Path == "/port"):
+		if req.Method == http.MethodHead {
+			tr.internalHeadCalls.Add(1)
+		}
+		return testResponse(req, ""), nil
+	case host == externalHost && req.URL.Path == "/x":
+		return responseWithStatus(req, http.StatusNotFound, ""), nil
+	default:
+		return nil, fmt.Errorf("unexpected request: %s", req.URL)
+	}
+}
+
+func TestAnalyzeIPv6HostNormalized(t *testing.T) {
+	t.Parallel()
+
+	tr := &ipv6Transport{}
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        "http://[::1]/",
+		Depth:      2,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: tr},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 3, "IPv6 links with the default port must stay internal")
+	require.Len(t, rep.Pages[0].BrokenLinks, 1)
+	assert.Equal(t, "http://external.example/x", rep.Pages[0].BrokenLinks[0].URL)
+	assert.Zero(t, tr.internalHeadCalls.Load(), "internal IPv6 links must not be probed")
+}

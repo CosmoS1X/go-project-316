@@ -1,6 +1,7 @@
 package crawler_test
 
 import (
+	"errors"
 	"net/http"
 	"sync"
 	"testing"
@@ -106,4 +107,104 @@ func TestAnalyzeFallsBackToGetOnMethodNotAllowed(t *testing.T) {
 	defer mu.Unlock()
 	assert.Equal(t, []string{http.MethodHead, http.MethodGet}, methods["/link"])
 	assert.Equal(t, []string{http.MethodHead, http.MethodGet}, methods[logoPath])
+}
+
+type getFallbackErrorTransport struct{}
+
+func (getFallbackErrorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	switch req.URL.Path {
+	case "", "/":
+		return testResponse(req, `<a href="/link">link</a><img src="/asset.bin">`), nil
+	case "/link", "/asset.bin":
+		if req.Method == http.MethodHead {
+			return responseWithStatus(req, http.StatusMethodNotAllowed, ""), nil
+		}
+		return nil, errors.New("connection failed")
+	default:
+		return responseWithStatus(req, http.StatusNotFound, ""), nil
+	}
+}
+
+func TestAnalyzeGETFallbackError(t *testing.T) {
+	t.Parallel()
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        exampleURL + "/",
+		Depth:      0,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: getFallbackErrorTransport{}},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	require.Len(t, rep.Pages[0].BrokenLinks, 1)
+	assert.Equal(t, exampleURL+"/link", rep.Pages[0].BrokenLinks[0].URL)
+	assert.Zero(t, rep.Pages[0].BrokenLinks[0].StatusCode)
+	assert.Contains(t, rep.Pages[0].BrokenLinks[0].Error, "connection failed")
+
+	require.Len(t, rep.Pages[0].Assets, 1)
+	assert.Equal(t, exampleURL+"/asset.bin", rep.Pages[0].Assets[0].URL)
+	assert.Zero(t, rep.Pages[0].Assets[0].StatusCode)
+	assert.Contains(t, rep.Pages[0].Assets[0].Error, "connection failed")
+}
+
+type assetReadErrorTransport struct{}
+
+func (assetReadErrorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Path == "" || req.URL.Path == "/" {
+		return testResponse(req, `<img src="/asset.bin">`), nil
+	}
+	if req.Method == http.MethodHead {
+		return responseWithStatus(req, http.StatusMethodNotAllowed, ""), nil
+	}
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Status:        http.StatusText(http.StatusOK),
+		Header:        make(http.Header),
+		Body:          failingBody{},
+		ContentLength: -1,
+		Request:       req,
+	}, nil
+}
+
+func TestAnalyzeAssetGETReadError(t *testing.T) {
+	t.Parallel()
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        exampleURL,
+		Depth:      0,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: assetReadErrorTransport{}},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	require.Len(t, rep.Pages[0].Assets, 1)
+	assert.Contains(t, rep.Pages[0].Assets[0].Error, "read body")
+}
+
+type unknownStatusTransport struct{}
+
+func (unknownStatusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return responseWithStatus(req, 599, testHTMLBody), nil
+}
+
+func TestAnalyzeUnknownHTTPStatus(t *testing.T) {
+	t.Parallel()
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        exampleURL,
+		Depth:      0,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: unknownStatusTransport{}},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, 599, rep.Pages[0].HTTPStatus)
+	assert.Equal(t, "error", rep.Pages[0].Status)
+	assert.Equal(t, "unexpected http status: 599", rep.Pages[0].Error)
 }

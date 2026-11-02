@@ -351,3 +351,32 @@ func TestAnalyzeAssetsContextCancel(t *testing.T) {
 	assert.Empty(t, rep.Pages[0].Assets)
 	assert.NotContains(t, string(data), context.Canceled.Error())
 }
+
+func TestAnalyzeMalformedAssetURLIgnored(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			writeBody(t, w, `<img src="http://[::1"><img src="`+logoPath+`">`)
+		case logoPath:
+			w.Header().Set("Content-Length", "4")
+			writeBody(t, w, "logo")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      0,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	require.Len(t, rep.Pages[0].Assets, 1)
+	assert.Equal(t, srv.URL+logoPath, rep.Pages[0].Assets[0].URL)
+}

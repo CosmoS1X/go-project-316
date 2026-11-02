@@ -46,6 +46,15 @@ func TestAnalyzeSEO(t *testing.T) {
 				HasH1:          true,
 			},
 		},
+		{
+			name:    "duplicate title uses first tag",
+			fixture: "seo_duplicate_title.html",
+			want: crawler.SEO{
+				HasTitle: true,
+				Title:    "First Title",
+				HasH1:    true,
+			},
+		},
 	}
 
 	for _, tt := range tests {

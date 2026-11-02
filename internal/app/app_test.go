@@ -50,7 +50,7 @@ func TestHelpDescribesFlags(t *testing.T) {
 	}
 }
 
-func TestRunPrintsReport(t *testing.T) {
+func TestRunPrintsJSONReport(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -66,18 +66,6 @@ func TestRunPrintsReport(t *testing.T) {
 	assert.Equal(t, srv.URL, rep.RootURL)
 	require.Len(t, rep.Pages, 1)
 	assert.Equal(t, http.StatusOK, rep.Pages[0].HTTPStatus)
-}
-
-func TestRunPrintsJSONVerbatim(t *testing.T) {
-	t.Parallel()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-
-	cmd, buf := newTestCommand(srv.Client())
-	require.NoError(t, cmd.Run(t.Context(), []string{commandName, srv.URL}))
 
 	out := buf.String()
 	require.NotEmpty(t, out)
