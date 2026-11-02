@@ -63,7 +63,7 @@ func (c *crawler) Run(ctx context.Context) *Report {
 		current := queue[0]
 		queue = queue[1:]
 
-		p, body := c.visit(ctx, current.url, current.depth)
+		p, links := c.visitPage(ctx, current.url, current.depth)
 		pages = append(pages, p)
 
 		if ctx.Err() != nil {
@@ -74,25 +74,15 @@ func (c *crawler) Run(ctx context.Context) *Report {
 			continue
 		}
 
-		if len(body) == 0 {
-			continue
-		}
-
-		for _, link := range extractLinks(body) {
-			if link.Kind != linkNavigation {
-				continue
-			}
+		for _, link := range links {
 			if ctx.Err() != nil {
 				break
 			}
-			linkURL, ok := resolveLink(current.url, link.URL)
+			linkURL, ok := c.resolveNavigationLink(current.url, link)
 			if !ok {
 				continue
 			}
-			if c.root.Host != "" && normalizedHost(linkURL) != normalizedHost(c.root) {
-				continue
-			}
-			if linkURL.Scheme != schemeHTTP && linkURL.Scheme != schemeHTTPS {
+			if !c.isInternal(linkURL) {
 				continue
 			}
 
@@ -120,13 +110,12 @@ func (c *crawler) Run(ctx context.Context) *Report {
 	}
 }
 
-func (c *crawler) visit(ctx context.Context, pageURL *url.URL, depth int) (p Page, body []byte) {
+func (c *crawler) visitPage(ctx context.Context, pageURL *url.URL, depth int) (p Page, links []extractedLink) {
 	discoveredAt := time.Now().UTC().Truncate(time.Second)
-	rawURL := pageURL.String()
-	result := c.fetch(ctx, http.MethodGet, rawURL, fetchFullBody)
+	result := c.fetch(ctx, http.MethodGet, pageURL.String(), fetchFullBody)
 
 	p = Page{
-		URL:          rawURL,
+		URL:          pageURL.String(),
 		Depth:        depth,
 		HTTPStatus:   result.StatusCode,
 		Status:       statusOK,
@@ -143,8 +132,22 @@ func (c *crawler) visit(ctx context.Context, pageURL *url.URL, depth int) (p Pag
 		p.Error = statusErrorText(result.StatusCode)
 	}
 
+	links = extractLinks(result.Body)
 	p.SEO = extractSEO(result.Body)
-	p.Assets = c.collectAssets(ctx, pageURL, result.Body)
-	p.BrokenLinks = c.findBrokenLinks(ctx, pageURL, depth, result.Body)
-	return p, result.Body
+	p.Assets = c.collectAssets(ctx, pageURL, links)
+	p.BrokenLinks = c.findBrokenLinks(ctx, pageURL, depth, links)
+	return p, links
+}
+
+// resolveNavigationLink resolves a raw link and rejects non-navigation kinds.
+func (c *crawler) resolveNavigationLink(base *url.URL, link extractedLink) (*url.URL, bool) {
+	if link.Kind != linkNavigation {
+		return nil, false
+	}
+	return resolveLink(base, link.URL)
+}
+
+// isInternal reports whether the URL points to the crawl root host.
+func (c *crawler) isInternal(u *url.URL) bool {
+	return normalizedHost(u) == normalizedHost(c.root)
 }

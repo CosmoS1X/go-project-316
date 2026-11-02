@@ -18,8 +18,7 @@ type assetMeta struct {
 	Error      string
 }
 
-func (c *crawler) collectAssets(ctx context.Context, pageURL *url.URL, body []byte) []Asset {
-	rawLinks := extractLinks(body)
+func (c *crawler) collectAssets(ctx context.Context, pageURL *url.URL, rawLinks []extractedLink) []Asset {
 	seen := make(map[string]struct{}, len(rawLinks))
 	assets := make([]Asset, 0, len(rawLinks))
 

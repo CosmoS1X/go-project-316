@@ -35,9 +35,8 @@ func (c *crawler) findBrokenLinks(
 	ctx context.Context,
 	pageURL *url.URL,
 	depth int,
-	body []byte,
+	rawLinks []extractedLink,
 ) []BrokenLink {
-	rawLinks := extractLinks(body)
 	broken := make([]BrokenLink, 0, len(rawLinks))
 	seen := make(map[string]struct{}, len(rawLinks))
 	canSchedule := depth+1 < c.opts.Depth
@@ -49,7 +48,7 @@ func (c *crawler) findBrokenLinks(
 			return broken
 		}
 
-		linkURL, ok := resolveLink(pageURL, link.URL)
+		linkURL, ok := c.resolveNavigationLink(pageURL, link)
 		if !ok {
 			continue
 		}
@@ -62,7 +61,7 @@ func (c *crawler) findBrokenLinks(
 		}
 		seen[linkKey] = struct{}{}
 
-		if normalizedHost(linkURL) == normalizedHost(c.root) && canSchedule {
+		if c.isInternal(linkURL) && canSchedule {
 			continue
 		}
 
