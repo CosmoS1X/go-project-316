@@ -1,9 +1,7 @@
 package crawler_test
 
 import (
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -13,8 +11,6 @@ import (
 
 	"code/crawler"
 )
-
-const fallbackLogoPath = "/logo.png"
 
 type methodCheck struct {
 	method string
@@ -73,31 +69,24 @@ func TestAnalyzeFallsBackToGetOnMethodNotAllowed(t *testing.T) {
 		mu      sync.Mutex
 		methods = make(map[string][]string)
 	)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		methods[r.URL.Path] = append(methods[r.URL.Path], r.Method)
 		mu.Unlock()
 
 		switch r.URL.Path {
 		case "/":
-			_, err := io.WriteString(w, `<a href="/link">link</a><img src="`+fallbackLogoPath+`">`)
-			if err != nil {
-				t.Errorf("write response: %v", err)
-			}
-		case "/link", fallbackLogoPath:
+			writeBody(t, w, `<a href="/link">link</a><img src="`+logoPath+`">`)
+		case "/link", logoPath:
 			if r.Method == http.MethodHead {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			_, err := io.WriteString(w, "logo!")
-			if err != nil {
-				t.Errorf("write response: %v", err)
-			}
+			writeBody(t, w, "logo!")
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	t.Cleanup(srv.Close)
+	})
 
 	data, err := crawler.Analyze(t.Context(), crawler.Options{
 		URL:        srv.URL,
@@ -116,5 +105,5 @@ func TestAnalyzeFallsBackToGetOnMethodNotAllowed(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Equal(t, []string{http.MethodHead, http.MethodGet}, methods["/link"])
-	assert.Equal(t, []string{http.MethodHead, http.MethodGet}, methods[fallbackLogoPath])
+	assert.Equal(t, []string{http.MethodHead, http.MethodGet}, methods[logoPath])
 }

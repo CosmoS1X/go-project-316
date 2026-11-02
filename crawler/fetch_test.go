@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,8 +16,6 @@ import (
 
 	"code/crawler"
 )
-
-const testHTMLBody = "<html></html>"
 
 type sequenceResult struct {
 	status int
@@ -79,8 +76,16 @@ func TestAnalyzeRetriesUntilSuccess(t *testing.T) {
 		first sequenceResult
 	}{
 		{
-			name:  "http error",
+			name:  "too many requests",
+			first: sequenceResult{status: http.StatusTooManyRequests},
+		},
+		{
+			name:  "internal server error",
 			first: sequenceResult{status: http.StatusInternalServerError},
+		},
+		{
+			name:  "service unavailable",
+			first: sequenceResult{status: http.StatusServiceUnavailable},
 		},
 		{
 			name:  "network error",
@@ -170,44 +175,6 @@ func TestAnalyzeRetriesNetworkErrorExhausted(t *testing.T) {
 	assert.Equal(t, 3, tr.callCount(), "must make exactly retries + 1 attempts")
 }
 
-func TestAnalyzeRetriesTransientStatuses(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		status int
-	}{
-		{name: "too many requests", status: http.StatusTooManyRequests},
-		{name: "internal server error", status: http.StatusInternalServerError},
-		{name: "service unavailable", status: http.StatusServiceUnavailable},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			tr := &sequenceTransport{results: []sequenceResult{
-				{status: tt.status},
-				{status: http.StatusOK, body: testHTMLBody},
-			}}
-
-			data, err := crawler.Analyze(t.Context(), crawler.Options{
-				URL:        exampleURL,
-				Depth:      0,
-				Timeout:    time.Second,
-				Retries:    1,
-				HTTPClient: &http.Client{Transport: tr},
-			})
-			require.NoError(t, err)
-
-			rep := decodeReport(t, data)
-			require.Len(t, rep.Pages, 1)
-			assert.Equal(t, "ok", rep.Pages[0].Status)
-			assert.Equal(t, 2, tr.callCount())
-		})
-	}
-}
-
 func TestAnalyzeDoesNotRetryClientError(t *testing.T) {
 	t.Parallel()
 
@@ -276,46 +243,6 @@ func TestAnalyzeRetryWaitsBetweenAttempts(t *testing.T) {
 	require.Len(t, times, 2)
 	assert.GreaterOrEqual(t, times[1].Sub(times[0]), 50*time.Millisecond,
 		"retry must wait before the next attempt")
-}
-
-func TestAnalyzeBrokenLinkReportsLastAttempt(t *testing.T) {
-	t.Parallel()
-
-	var assetCalls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/":
-			_, err := io.WriteString(w, `<a href="/asset">asset</a>`)
-			if err != nil {
-				t.Errorf("write response: %v", err)
-			}
-		case "/asset":
-			if assetCalls.Add(1) == 1 {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	t.Cleanup(srv.Close)
-
-	data, err := crawler.Analyze(t.Context(), crawler.Options{
-		URL:        srv.URL,
-		Depth:      1,
-		Timeout:    time.Second,
-		Retries:    1,
-		HTTPClient: srv.Client(),
-	})
-	require.NoError(t, err)
-
-	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
-	assert.Equal(t, []testBrokenLink{
-		{URL: srv.URL + "/asset", StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
-	}, rep.Pages[0].BrokenLinks)
-	assert.Equal(t, int32(2), assetCalls.Load(), "broken link check retries once")
 }
 
 type cancelingTransport struct {

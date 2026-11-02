@@ -1,0 +1,192 @@
+package crawler_test
+
+import (
+	"errors"
+	"net/http"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"code/crawler"
+)
+
+const brokenPath = "/broken"
+
+func TestAnalyzeBrokenLinks(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			writeBody(t, w, `<a href="/working">working</a><a href="/broken">broken</a>`)
+		case "/working":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+	assert.Equal(t, 0, rep.Pages[0].Depth)
+	assert.Equal(t, []crawler.BrokenLink{
+		{URL: srv.URL + brokenPath, StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
+	}, rep.Pages[0].BrokenLinks)
+}
+
+func TestAnalyzeBrokenLinkTags(t *testing.T) {
+	t.Parallel()
+
+	body := loadFixture(t, "broken_tags.html")
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			writeBody(t, w, body)
+		case "/working", "/assets/app.js":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+	assert.Equal(t, 0, rep.Pages[0].Depth)
+	assert.Empty(t, rep.Pages[0].BrokenLinks)
+	assert.Equal(t, []crawler.Asset{
+		{
+			URL:        srv.URL + "/assets/missing.png",
+			Type:       assetTypeImage,
+			StatusCode: http.StatusNotFound,
+			Error:      http.StatusText(http.StatusNotFound),
+		},
+		{
+			URL:        srv.URL + "/assets/app.js",
+			Type:       assetTypeScript,
+			StatusCode: http.StatusOK,
+		},
+	}, rep.Pages[0].Assets)
+}
+
+func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
+	t.Parallel()
+
+	body := loadFixture(t, "broken_links_ignore.html")
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			writeBody(t, w, body)
+		case brokenPath:
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+
+	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+	assert.Equal(t, 0, rep.Pages[0].Depth)
+	assert.Equal(t, []crawler.BrokenLink{
+		{URL: srv.URL + brokenPath, StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
+	}, rep.Pages[0].BrokenLinks)
+}
+
+type unreachableLinkTransport struct{}
+
+func (unreachableLinkTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.String() == exampleURL+"/" {
+		return testResponse(req, `<a href="https://offline.example/page">offline</a>`), nil
+	}
+	return nil, errors.New("connection failed")
+}
+
+func TestAnalyzeBrokenLinkNetworkError(t *testing.T) {
+	t.Parallel()
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        exampleURL + "/",
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: unreachableLinkTransport{}},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	require.Len(t, rep.Pages[0].BrokenLinks, 1)
+
+	got := rep.Pages[0].BrokenLinks[0]
+	assert.Equal(t, "https://offline.example/page", got.URL)
+	assert.Zero(t, got.StatusCode)
+	assert.Contains(t, got.Error, "connection failed")
+	assert.Empty(t, rep.Pages[0].Assets)
+}
+
+func TestAnalyzeBrokenLinkReportsLastAttempt(t *testing.T) {
+	t.Parallel()
+
+	var linkCalls atomic.Int32
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			writeBody(t, w, `<a href="/asset">asset</a>`)
+		case "/asset":
+			if linkCalls.Add(1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		Retries:    1,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, []crawler.BrokenLink{
+		{URL: srv.URL + "/asset", StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
+	}, rep.Pages[0].BrokenLinks)
+	assert.Equal(t, int32(2), linkCalls.Load(), "broken link check retries once")
+}

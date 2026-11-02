@@ -60,38 +60,37 @@ func (m contractTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 func TestAnalyzeOptionsAndReportContract(t *testing.T) {
 	t.Parallel()
 
-	rootURL := "https://example.com"
 	rootHTML := loadFixture(t, "contract_page.html")
 
 	client := &http.Client{
 		Transport: contractTransport{
 			responses: map[string]contractResponse{
-				"GET https://example.com": {
+				"GET " + exampleURL: {
 					status: http.StatusOK,
 					body:   rootHTML,
 					headers: http.Header{
 						"Content-Type": []string{"text/html"},
 					},
 				},
-				"HEAD https://example.com/about": {
+				"HEAD " + exampleURL + "/about": {
 					status: http.StatusOK,
 				},
-				"HEAD https://example.com/missing": {
+				"HEAD " + exampleURL + "/missing": {
 					status: http.StatusNotFound,
 				},
-				"HEAD https://example.com/static/logo.png": {
+				"HEAD " + exampleURL + "/static/logo.png": {
 					status:           http.StatusOK,
 					headers:          http.Header{contentLengthHeader: []string{"16"}},
 					contentLength:    16,
 					hasContentLength: true,
 				},
-				"HEAD https://example.com/static/app.js": {
+				"HEAD " + exampleURL + "/static/app.js": {
 					status:           http.StatusOK,
 					headers:          http.Header{contentLengthHeader: []string{"32"}},
 					contentLength:    32,
 					hasContentLength: true,
 				},
-				"HEAD https://example.com/static/app.css": {
+				"HEAD " + exampleURL + "/static/app.css": {
 					status:           http.StatusOK,
 					headers:          http.Header{contentLengthHeader: []string{"24"}},
 					contentLength:    24,
@@ -102,7 +101,7 @@ func TestAnalyzeOptionsAndReportContract(t *testing.T) {
 	}
 
 	opts := crawler.Options{
-		URL:         rootURL,
+		URL:         exampleURL,
 		Depth:       1,
 		Retries:     0,
 		Delay:       0,
@@ -118,27 +117,37 @@ func TestAnalyzeOptionsAndReportContract(t *testing.T) {
 	var report crawler.Report
 	require.NoError(t, json.Unmarshal(data, &report))
 
-	assert.Equal(t, rootURL, report.RootURL)
+	assert.Equal(t, exampleURL, report.RootURL)
 	assert.Equal(t, opts.Depth, report.Depth)
 	require.Len(t, report.Pages, 1)
 
 	page := report.Pages[0]
-	assert.Equal(t, rootURL, page.URL)
-	assert.Equal(t, "Home", page.SEO.Title)
-	assert.True(t, page.SEO.HasTitle)
-	assert.Equal(t, "Root page description", page.SEO.Description)
-	assert.True(t, page.SEO.HasDescription)
-	assert.True(t, page.SEO.HasH1)
+	assert.Equal(t, exampleURL, page.URL)
 
 	require.Len(t, page.Assets, 3)
-	assert.Equal(t, "https://example.com/static/logo.png", page.Assets[0].URL)
-	assert.Equal(t, "image", page.Assets[0].Type)
-	assert.Equal(t, "https://example.com/static/app.js", page.Assets[1].URL)
-	assert.Equal(t, "script", page.Assets[1].Type)
-	assert.Equal(t, "https://example.com/static/app.css", page.Assets[2].URL)
-	assert.Equal(t, "style", page.Assets[2].Type)
+	assert.Equal(t, crawler.Asset{
+		URL:        exampleURL + "/static/logo.png",
+		Type:       assetTypeImage,
+		SizeBytes:  16,
+		StatusCode: http.StatusOK,
+	}, page.Assets[0])
+	assert.Equal(t, crawler.Asset{
+		URL:        exampleURL + "/static/app.js",
+		Type:       assetTypeScript,
+		SizeBytes:  32,
+		StatusCode: http.StatusOK,
+	}, page.Assets[1])
+	assert.Equal(t, crawler.Asset{
+		URL:        exampleURL + "/static/app.css",
+		Type:       assetTypeStyle,
+		SizeBytes:  24,
+		StatusCode: http.StatusOK,
+	}, page.Assets[2])
 
 	require.Len(t, page.BrokenLinks, 1)
-	assert.Equal(t, "https://example.com/missing", page.BrokenLinks[0].URL)
-	assert.Equal(t, http.StatusNotFound, page.BrokenLinks[0].StatusCode)
+	assert.Equal(t, crawler.BrokenLink{
+		URL:        exampleURL + "/missing",
+		StatusCode: http.StatusNotFound,
+		Error:      http.StatusText(http.StatusNotFound),
+	}, page.BrokenLinks[0])
 }

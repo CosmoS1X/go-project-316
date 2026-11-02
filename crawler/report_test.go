@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -17,10 +16,7 @@ import (
 	"code/crawler"
 )
 
-const (
-	referenceRootURL  = "https://example.com"
-	referenceLogoSize = 12345
-)
+const referenceLogoSize = 12345
 
 type referenceTransport struct {
 	pageHTML string
@@ -29,24 +25,13 @@ type referenceTransport struct {
 func (tr referenceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	switch {
 	case req.URL.Host == exampleHost && req.URL.Path == "/static/logo.png":
-		return referenceResponse(req, http.StatusOK, strings.Repeat("x", referenceLogoSize)), nil
+		return responseWithStatus(req, http.StatusOK, strings.Repeat("x", referenceLogoSize)), nil
 	case req.URL.Host == exampleHost:
-		return referenceResponse(req, http.StatusOK, tr.pageHTML), nil
-	case req.URL.Host == "external.example" && req.URL.Path == "/missing":
-		return referenceResponse(req, http.StatusNotFound, ""), nil
+		return responseWithStatus(req, http.StatusOK, tr.pageHTML), nil
+	case req.URL.Host == externalHost && req.URL.Path == "/missing":
+		return responseWithStatus(req, http.StatusNotFound, ""), nil
 	default:
 		return nil, fmt.Errorf("unexpected request: %s", req.URL)
-	}
-}
-
-func referenceResponse(req *http.Request, statusCode int, body string) *http.Response {
-	return &http.Response{
-		StatusCode:    statusCode,
-		Status:        http.StatusText(statusCode),
-		Header:        make(http.Header),
-		Body:          io.NopCloser(strings.NewReader(body)),
-		ContentLength: int64(len(body)),
-		Request:       req,
 	}
 }
 
@@ -54,7 +39,7 @@ func referenceOptions(t *testing.T, indent bool) crawler.Options {
 	t.Helper()
 
 	return crawler.Options{
-		URL:        referenceRootURL,
+		URL:        exampleURL,
 		Depth:      1,
 		Timeout:    time.Second,
 		IndentJSON: indent,
