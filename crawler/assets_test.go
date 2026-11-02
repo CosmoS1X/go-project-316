@@ -1,6 +1,7 @@
 package crawler_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -273,4 +274,80 @@ func TestAnalyzeAssetNetworkError(t *testing.T) {
 			assert.Contains(t, got.Error, "connection failed")
 		})
 	}
+}
+
+func TestAnalyzeAssetSameURLDifferentTypes(t *testing.T) {
+	t.Parallel()
+
+	var assetCalls atomic.Int32
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			writeBody(t, w, `<img src="/shared"><script src="/shared"></script>`)
+		case "/shared":
+			assetCalls.Add(1)
+			w.Header().Set("Content-Length", "5")
+			w.WriteHeader(http.StatusOK)
+			writeBody(t, w, "12345")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      0,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	require.Len(t, rep.Pages[0].Assets, 2)
+
+	image, script := rep.Pages[0].Assets[0], rep.Pages[0].Assets[1]
+	assert.Equal(t, assetTypeImage, image.Type)
+	assert.Equal(t, assetTypeScript, script.Type)
+	assert.Equal(t, srv.URL+"/shared", image.URL)
+	assert.Equal(t, srv.URL+"/shared", script.URL)
+	assert.Equal(t, int64(5), image.SizeBytes)
+	assert.Equal(t, int64(5), script.SizeBytes)
+	assert.Equal(t, http.StatusOK, image.StatusCode)
+	assert.Equal(t, http.StatusOK, script.StatusCode)
+	assert.Equal(t, int32(1), assetCalls.Load(), "shared asset URL must be fetched once")
+}
+
+type assetCancelingTransport struct {
+	cancel context.CancelFunc
+	calls  atomic.Int32
+}
+
+func (tr *assetCancelingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	tr.calls.Add(1)
+	if req.URL.Path == logoPath {
+		tr.cancel()
+		return nil, context.Canceled
+	}
+	return testResponse(req, `<img src="`+logoPath+`">`), nil
+}
+
+func TestAnalyzeAssetsContextCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	data, err := crawler.Analyze(ctx, crawler.Options{
+		URL:        exampleURL,
+		Depth:      0,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: &assetCancelingTransport{cancel: cancel}},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Empty(t, rep.Pages[0].Assets)
+	assert.NotContains(t, string(data), context.Canceled.Error())
 }

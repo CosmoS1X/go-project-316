@@ -14,7 +14,7 @@ import (
 type crawler struct {
 	opts       Options
 	limiter    *rate.Limiter
-	assetCache map[string]Asset
+	assetCache map[string]assetMeta
 }
 
 func newCrawler(opts Options) (*crawler, error) {
@@ -33,7 +33,7 @@ func newCrawler(opts Options) (*crawler, error) {
 	return &crawler{
 		opts:       opts,
 		limiter:    limiter,
-		assetCache: make(map[string]Asset),
+		assetCache: make(map[string]assetMeta),
 	}, nil
 }
 
@@ -105,7 +105,7 @@ func (c *crawler) Run(ctx context.Context) *Report {
 			if parseErr != nil {
 				continue
 			}
-			if rootParsed.Host != "" && linkParsed.Host != rootParsed.Host {
+			if rootParsed.Host != "" && normalizedHost(linkParsed) != normalizedHost(rootParsed) {
 				continue
 			}
 			if linkParsed.Scheme != schemeHTTP && linkParsed.Scheme != schemeHTTPS {

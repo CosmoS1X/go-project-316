@@ -2,6 +2,7 @@ package crawler_test
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -109,6 +110,16 @@ func TestAnalyzeInvalidOptions(t *testing.T) {
 		{
 			name:    "negative rps",
 			opts:    crawler.Options{URL: exampleURL, RPS: -1, HTTPClient: client},
+			wantErr: crawler.ErrInvalidOptions,
+		},
+		{
+			name:    "nan rps",
+			opts:    crawler.Options{URL: exampleURL, RPS: math.NaN(), HTTPClient: client},
+			wantErr: crawler.ErrInvalidOptions,
+		},
+		{
+			name:    "infinite rps",
+			opts:    crawler.Options{URL: exampleURL, RPS: math.Inf(1), HTTPClient: client},
 			wantErr: crawler.ErrInvalidOptions,
 		},
 	}

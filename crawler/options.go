@@ -3,6 +3,7 @@ package crawler
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"time"
@@ -45,6 +46,9 @@ func (o Options) validate() error {
 	}
 	if o.Concurrency < 0 {
 		return fmt.Errorf("%w: concurrency must not be negative", ErrInvalidOptions)
+	}
+	if math.IsNaN(o.RPS) || math.IsInf(o.RPS, 0) {
+		return fmt.Errorf("%w: rps must be finite", ErrInvalidOptions)
 	}
 	if o.RPS < 0 {
 		return fmt.Errorf("%w: rps must not be negative", ErrInvalidOptions)

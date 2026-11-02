@@ -1,8 +1,11 @@
 package crawler_test
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -189,4 +192,119 @@ func TestAnalyzeBrokenLinkReportsLastAttempt(t *testing.T) {
 		{URL: srv.URL + "/asset", StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
 	}, rep.Pages[0].BrokenLinks)
 	assert.Equal(t, int32(2), linkCalls.Load(), "broken link check retries once")
+}
+
+func TestAnalyzeBrokenLinksDeduplicated(t *testing.T) {
+	t.Parallel()
+
+	var checkCalls atomic.Int32
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			writeBody(t, w, `<a href="/broken">a</a><a href="/broken#frag">b</a><a href="/broken">c</a>`)
+		case brokenPath:
+			checkCalls.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        srv.URL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, []crawler.BrokenLink{
+		{URL: srv.URL + brokenPath, StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
+	}, rep.Pages[0].BrokenLinks)
+	assert.Equal(t, int32(1), checkCalls.Load(), "duplicate links must be checked once per page")
+}
+
+type linkCancelingTransport struct {
+	cancel context.CancelFunc
+}
+
+func (tr linkCancelingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Path == brokenPath {
+		tr.cancel()
+		return nil, context.Canceled
+	}
+	return testResponse(req, `<a href="/broken">broken</a>`), nil
+}
+
+func TestAnalyzeBrokenLinksContextCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	data, err := crawler.Analyze(ctx, crawler.Options{
+		URL:        exampleURL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: linkCancelingTransport{cancel: cancel}},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Empty(t, rep.Pages[0].BrokenLinks)
+	assert.NotContains(t, string(data), context.Canceled.Error())
+}
+
+type hostNormalizationTransport struct {
+	upperHeadCalls atomic.Int32
+	portHeadCalls  atomic.Int32
+}
+
+func (tr *hostNormalizationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	host := strings.ToLower(req.URL.Hostname())
+	switch {
+	case host == exampleHost && (req.URL.Path == "" || req.URL.Path == "/"):
+		return testResponse(req, `<a href="https://EXAMPLE.com/upper">upper</a><a href="https://example.com:443/port">port</a><a href="https://external.example/x">ext</a>`), nil
+	case host == exampleHost && req.URL.Path == "/upper":
+		if req.Method == http.MethodHead {
+			tr.upperHeadCalls.Add(1)
+		}
+		return testResponse(req, ""), nil
+	case host == exampleHost && req.URL.Path == "/port":
+		if req.Method == http.MethodHead {
+			tr.portHeadCalls.Add(1)
+		}
+		return testResponse(req, ""), nil
+	case host == externalHost && req.URL.Path == "/x":
+		return responseWithStatus(req, http.StatusNotFound, ""), nil
+	default:
+		return nil, fmt.Errorf("unexpected request: %s", req.URL)
+	}
+}
+
+func TestAnalyzeHostComparisonNormalized(t *testing.T) {
+	t.Parallel()
+
+	tr := &hostNormalizationTransport{}
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        exampleURL,
+		Depth:      2,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: tr},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 3, "links with a differently cased or default-port host must stay internal")
+	require.Len(t, rep.Pages[0].BrokenLinks, 1)
+	assert.Equal(t, crawler.BrokenLink{
+		URL:        "https://external.example/x",
+		StatusCode: http.StatusNotFound,
+		Error:      http.StatusText(http.StatusNotFound),
+	}, rep.Pages[0].BrokenLinks[0])
+	assert.Zero(t, tr.upperHeadCalls.Load(), "internal link with uppercase host must not be probed")
+	assert.Zero(t, tr.portHeadCalls.Load(), "internal link with default port must not be probed")
 }

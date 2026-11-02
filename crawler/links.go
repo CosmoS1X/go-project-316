@@ -3,6 +3,7 @@ package crawler
 import (
 	"bytes"
 	"context"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -43,10 +44,14 @@ func (c *crawler) findBrokenLinks(ctx context.Context, pageURL string, depth int
 
 	rawLinks := extractLinks(body)
 	broken := make([]BrokenLink, 0, len(rawLinks))
+	seen := make(map[string]struct{}, len(rawLinks))
 	canSchedule := depth+1 < c.opts.Depth
 	for _, link := range rawLinks {
 		if link.Kind != linkNavigation {
 			continue
+		}
+		if ctx.Err() != nil {
+			return broken
 		}
 
 		linkURL, ok := resolveLink(base, link.URL)
@@ -60,13 +65,20 @@ func (c *crawler) findBrokenLinks(ctx context.Context, pageURL string, depth int
 		if canonicalURL(linkParsed) == canonicalURL(base) {
 			continue
 		}
+		if _, exists := seen[linkURL]; exists {
+			continue
+		}
+		seen[linkURL] = struct{}{}
 
-		internal := linkParsed.Host == root.Host
+		internal := normalizedHost(linkParsed) == normalizedHost(root)
 		if internal && canSchedule {
 			continue
 		}
 
 		item, isBroken := c.checkLink(ctx, linkURL)
+		if ctx.Err() != nil {
+			return broken
+		}
 		if isBroken {
 			broken = append(broken, item)
 		}
@@ -202,12 +214,27 @@ func canonicalURL(u *url.URL) string {
 	canonical := *u
 	canonical.Fragment = ""
 	canonical.RawFragment = ""
+	canonical.Host = normalizedHost(u)
 	if canonical.Path == "" {
 		canonical.Path = "/"
 	} else if canonical.Path != "/" {
 		canonical.Path = strings.TrimSuffix(canonical.Path, "/")
 	}
 	return canonical.String()
+}
+
+func normalizedHost(u *url.URL) string {
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if port == "" ||
+		(u.Scheme == schemeHTTP && port == "80") ||
+		(u.Scheme == schemeHTTPS && port == "443") {
+		if strings.Contains(host, ":") {
+			return "[" + host + "]"
+		}
+		return host
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func normalizeURLForKey(raw string) string {
