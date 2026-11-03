@@ -22,8 +22,11 @@ jobs:
         with:
           version: v2.15.0
 
+      - name: Check formatting
+        run: golangci-lint fmt --diff
+
       - name: Run Tests
-        run: make test
+        run: make test-race
 
       - name: Run Build
         run: make build

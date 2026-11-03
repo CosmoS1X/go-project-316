@@ -63,7 +63,7 @@ func (c *crawler) Run(ctx context.Context) *Report {
 		current := queue[0]
 		queue = queue[1:]
 
-		p, links := c.visitPage(ctx, current.url, current.depth)
+		p, base, links := c.visitPage(ctx, current.url, current.depth)
 		pages = append(pages, p)
 
 		if ctx.Err() != nil {
@@ -78,7 +78,7 @@ func (c *crawler) Run(ctx context.Context) *Report {
 			if ctx.Err() != nil {
 				break
 			}
-			linkURL, ok := c.resolveNavigationLink(current.url, link)
+			linkURL, ok := c.resolveNavigationLink(base, link)
 			if !ok {
 				continue
 			}
@@ -110,7 +110,11 @@ func (c *crawler) Run(ctx context.Context) *Report {
 	}
 }
 
-func (c *crawler) visitPage(ctx context.Context, pageURL *url.URL, depth int) (p Page, links []extractedLink) {
+func (c *crawler) visitPage(
+	ctx context.Context,
+	pageURL *url.URL,
+	depth int,
+) (p Page, base *url.URL, links []extractedLink) {
 	discoveredAt := time.Now().UTC().Truncate(time.Second)
 	result := c.fetch(ctx, http.MethodGet, pageURL.String(), fetchFullBody)
 
@@ -124,7 +128,7 @@ func (c *crawler) visitPage(ctx context.Context, pageURL *url.URL, depth int) (p
 	if result.Err != nil {
 		p.Status = statusError
 		p.Error = result.Err.Error()
-		return p, nil
+		return p, pageURL, nil
 	}
 
 	if result.StatusCode >= http.StatusBadRequest {
@@ -132,11 +136,19 @@ func (c *crawler) visitPage(ctx context.Context, pageURL *url.URL, depth int) (p
 		p.Error = statusErrorText(result.StatusCode)
 	}
 
-	links = extractLinks(result.Body)
+	var baseHref string
+	links, baseHref = extractLinks(result.Body)
+	base = pageURL
+	if baseHref != "" {
+		if resolved, ok := resolveLink(pageURL, baseHref); ok {
+			base = resolved
+		}
+	}
+
 	p.SEO = extractSEO(result.Body)
-	p.Assets = c.collectAssets(ctx, pageURL, links)
-	p.BrokenLinks = c.findBrokenLinks(ctx, pageURL, depth, links)
-	return p, links
+	p.Assets = c.collectAssets(ctx, base, links)
+	p.BrokenLinks = c.findBrokenLinks(ctx, pageURL, base, depth, links)
+	return p, base, links
 }
 
 // resolveNavigationLink resolves a raw link and rejects non-navigation kinds.

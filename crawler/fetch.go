@@ -2,13 +2,19 @@ package crawler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
+
+	"golang.org/x/net/html/charset"
 )
 
-const retryDelay = 100 * time.Millisecond
+const (
+	retryDelay   = 100 * time.Millisecond
+	maxPageBytes = 10 << 20
+)
 
 type fetchMode int
 
@@ -94,7 +100,19 @@ func (c *crawler) doRequest(
 	switch mode {
 	case fetchStatusOnly:
 	case fetchFullBody:
-		body, readErr := io.ReadAll(resp.Body)
+		reader, convErr := charset.NewReader(
+			io.LimitReader(resp.Body, maxPageBytes),
+			resp.Header.Get("Content-Type"),
+		)
+		if errors.Is(convErr, io.EOF) {
+			reader = http.NoBody
+		} else if convErr != nil {
+			return fetchResult{
+				StatusCode: resp.StatusCode,
+				Err:        fmt.Errorf("read body: %w", convErr),
+			}, true
+		}
+		body, readErr := io.ReadAll(reader)
 		if readErr != nil {
 			return fetchResult{StatusCode: resp.StatusCode, Err: fmt.Errorf("read body: %w", readErr)}, true
 		}

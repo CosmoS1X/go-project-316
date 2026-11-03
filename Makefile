@@ -1,7 +1,7 @@
 BINARY := bin/hexlet-go-crawler
 COVERAGE_PROFILE := coverage.out
 
-.PHONY: build test cover cover-show run fmt lint tidy clean
+.PHONY: build test test-race cover cover-show run fmt lint tidy clean
 
 build:
 	go build -o $(BINARY) ./cmd/hexlet-go-crawler
@@ -14,6 +14,9 @@ lint: fmt
 
 test:
 	go test ./...
+
+test-race:
+	go test -race ./...
 
 cover:
 	go test ./... -coverprofile=$(COVERAGE_PROFILE) -covermode=count

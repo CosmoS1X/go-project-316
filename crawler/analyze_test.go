@@ -219,6 +219,28 @@ func TestAnalyzeReadBodyError(t *testing.T) {
 	assert.Nil(t, got.Assets)
 }
 
+func TestAnalyzeReadBodyErrorAfterPreview(t *testing.T) {
+	t.Parallel()
+
+	data, err := crawler.Analyze(t.Context(), crawler.Options{
+		URL:        exampleURL + "/",
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: lateFailingBodyTransport{}},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+
+	got := rep.Pages[0]
+	assert.Equal(t, http.StatusOK, got.HTTPStatus)
+	assert.Equal(t, "error", got.Status)
+	assert.Contains(t, got.Error, "read body")
+	assert.Nil(t, got.BrokenLinks)
+	assert.Nil(t, got.Assets)
+}
+
 func TestAnalyzePageHTTPError(t *testing.T) {
 	t.Parallel()
 
@@ -265,6 +287,37 @@ func (failingBodyTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		Status:     http.StatusText(http.StatusOK),
 		Header:     make(http.Header),
 		Body:       failingBody{},
+		Request:    req,
+	}, nil
+}
+
+type lateFailingBody struct {
+	remaining int
+}
+
+func (b *lateFailingBody) Read(p []byte) (int, error) {
+	if b.remaining == 0 {
+		return 0, errors.New("read failed")
+	}
+	b.remaining--
+	for i := range p {
+		p[i] = 'a'
+	}
+	return len(p), nil
+}
+
+func (b *lateFailingBody) Close() error {
+	return nil
+}
+
+type lateFailingBodyTransport struct{}
+
+func (lateFailingBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     http.StatusText(http.StatusOK),
+		Header:     make(http.Header),
+		Body:       &lateFailingBody{remaining: 1},
 		Request:    req,
 	}, nil
 }

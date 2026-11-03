@@ -26,16 +26,22 @@ const (
 	linkStyle
 )
 
+const (
+	attrHref = "href"
+	attrSrc  = "src"
+	attrRel  = "rel"
+)
+
 type linkSpec struct {
 	attr string
 	kind linkKind
 }
 
 var linkSpecs = map[string]linkSpec{
-	"a":      {attr: "href", kind: linkNavigation},
-	"img":    {attr: "src", kind: linkImage},
-	"script": {attr: "src", kind: linkScript},
-	"link":   {attr: "href", kind: linkStyle},
+	"a":      {attr: attrHref, kind: linkNavigation},
+	"img":    {attr: attrSrc, kind: linkImage},
+	"script": {attr: attrSrc, kind: linkScript},
+	"link":   {attr: attrHref, kind: linkStyle},
 }
 
 type extractedLink struct {
@@ -45,7 +51,7 @@ type extractedLink struct {
 
 func (c *crawler) findBrokenLinks(
 	ctx context.Context,
-	pageURL *url.URL,
+	pageURL, base *url.URL,
 	depth int,
 	rawLinks []extractedLink,
 ) []BrokenLink {
@@ -57,7 +63,7 @@ func (c *crawler) findBrokenLinks(
 			return broken
 		}
 
-		linkURL, ok := c.resolveNavigationLink(pageURL, link)
+		linkURL, ok := c.resolveNavigationLink(base, link)
 		if !ok {
 			continue
 		}
@@ -104,20 +110,35 @@ func (c *crawler) probeLink(ctx context.Context, linkURL *url.URL) (BrokenLink, 
 	return BrokenLink{}, false
 }
 
-func extractLinks(body []byte) []extractedLink {
+func extractLinks(body []byte) (links []extractedLink, baseHref string) {
 	tokenizer := html.NewTokenizer(bytes.NewReader(body))
-	links := make([]extractedLink, 0)
+	links = make([]extractedLink, 0)
+	baseSeen := false
 
 	for {
 		tokenType := tokenizer.Next()
 		if tokenType == html.ErrorToken {
-			return links
+			return links, baseHref
 		}
 		if tokenType != html.StartTagToken && tokenType != html.SelfClosingTagToken {
 			continue
 		}
 
 		tagName, _ := tokenizer.TagName()
+		if !baseSeen && string(tagName) == "base" {
+			baseSeen = true
+			for {
+				key, value, more := tokenizer.TagAttr()
+				if string(key) == attrHref {
+					baseHref = string(value)
+				}
+				if !more {
+					break
+				}
+			}
+			continue
+		}
+
 		spec, ok := linkSpecs[string(tagName)]
 		if !ok {
 			continue
@@ -129,7 +150,7 @@ func extractLinks(body []byte) []extractedLink {
 			switch string(key) {
 			case spec.attr:
 				rawURL = string(value)
-			case "rel":
+			case attrRel:
 				rel = string(value)
 			}
 			if !more {

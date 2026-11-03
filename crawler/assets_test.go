@@ -380,3 +380,34 @@ func TestAnalyzeMalformedAssetURLIgnored(t *testing.T) {
 	require.Len(t, rep.Pages[0].Assets, 1)
 	assert.Equal(t, srv.URL+logoPath, rep.Pages[0].Assets[0].URL)
 }
+
+type pageCancelingTransport struct {
+	cancel context.CancelFunc
+}
+
+func (tr pageCancelingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	tr.cancel()
+	return testResponse(req, `<img src="`+logoPath+`"><a href="/broken">broken</a>`), nil
+}
+
+func TestAnalyzeSkipsOptionalWorkWhenContextCanceled(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	data, err := crawler.Analyze(ctx, crawler.Options{
+		URL:        exampleURL,
+		Depth:      1,
+		Timeout:    time.Second,
+		HTTPClient: &http.Client{Transport: pageCancelingTransport{cancel: cancel}},
+	})
+	require.NoError(t, err)
+
+	rep := decodeReport(t, data)
+	require.Len(t, rep.Pages, 1)
+	assert.Equal(t, "ok", rep.Pages[0].Status)
+	assert.Empty(t, rep.Pages[0].Assets)
+	assert.Empty(t, rep.Pages[0].BrokenLinks)
+	assert.NotContains(t, string(data), context.Canceled.Error())
+}
