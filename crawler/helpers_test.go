@@ -2,6 +2,7 @@ package crawler_test
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -104,4 +105,10 @@ func writeBody(t *testing.T, w http.ResponseWriter, body string) {
 	if _, err := io.WriteString(w, body); err != nil {
 		t.Errorf("write response: %v", err)
 	}
+}
+
+type failingTransport struct{}
+
+func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("connection failed")
 }
