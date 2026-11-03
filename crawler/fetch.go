@@ -27,7 +27,7 @@ const (
 type fetchResult struct {
 	StatusCode int
 	Body       []byte
-	Size       int64
+	AssetSize  int64
 	Err        error
 }
 
@@ -64,6 +64,8 @@ func (c *crawler) fetchWithGETFallback(
 	return c.fetch(ctx, http.MethodGet, rawURL, mode)
 }
 
+// doRequest performs a single HTTP attempt and reports whether a failure is
+// transient and therefore retryable.
 func (c *crawler) doRequest(
 	ctx context.Context,
 	method, rawURL string,
@@ -75,20 +77,11 @@ func (c *crawler) doRequest(
 		}
 	}
 
-	reqCtx := ctx
-	if c.opts.Timeout > 0 {
-		var cancel context.CancelFunc
-		reqCtx, cancel = context.WithTimeout(ctx, c.opts.Timeout)
-		defer cancel()
-	}
-
-	req, err := http.NewRequestWithContext(reqCtx, method, rawURL, http.NoBody)
+	req, cancel, err := c.buildRequest(ctx, method, rawURL)
 	if err != nil {
-		return fetchResult{Err: fmt.Errorf("build request: %w", err)}, false
+		return fetchResult{Err: err}, false
 	}
-	if c.opts.UserAgent != "" {
-		req.Header.Set("User-Agent", c.opts.UserAgent)
-	}
+	defer cancel()
 
 	resp, err := c.opts.HTTPClient.Do(req)
 	if err != nil {
@@ -96,40 +89,91 @@ func (c *crawler) doRequest(
 	}
 	defer resp.Body.Close()
 
+	return readResponse(resp, method, mode)
+}
+
+func (c *crawler) buildRequest(
+	ctx context.Context,
+	method, rawURL string,
+) (*http.Request, context.CancelFunc, error) {
+	reqCtx := ctx
+	cancel := context.CancelFunc(func() {})
+	if c.opts.Timeout > 0 {
+		reqCtx, cancel = context.WithTimeout(ctx, c.opts.Timeout)
+	}
+
+	req, err := http.NewRequestWithContext(reqCtx, method, rawURL, http.NoBody)
+	if err != nil {
+		cancel()
+		return nil, nil, fmt.Errorf("build request: %w", err)
+	}
+	if c.opts.UserAgent != "" {
+		req.Header.Set("User-Agent", c.opts.UserAgent)
+	}
+	return req, cancel, nil
+}
+
+// readResponse extracts the result payload for the requested fetch mode.
+func readResponse(resp *http.Response, method string, mode fetchMode) (fetchResult, bool) {
 	result := fetchResult{StatusCode: resp.StatusCode}
 	switch mode {
 	case fetchStatusOnly:
 	case fetchFullBody:
-		reader, convErr := charset.NewReader(
-			io.LimitReader(resp.Body, maxPageBytes),
-			resp.Header.Get("Content-Type"),
-		)
-		if errors.Is(convErr, io.EOF) {
-			reader = http.NoBody
-		} else if convErr != nil {
-			return fetchResult{
-				StatusCode: resp.StatusCode,
-				Err:        fmt.Errorf("read body: %w", convErr),
-			}, true
-		}
-		body, readErr := io.ReadAll(reader)
-		if readErr != nil {
-			return fetchResult{StatusCode: resp.StatusCode, Err: fmt.Errorf("read body: %w", readErr)}, true
+		body, err := readPageBody(resp)
+		if err != nil {
+			return fetchResult{StatusCode: resp.StatusCode, Err: err}, true
 		}
 		result.Body = body
-		result.Size = int64(len(body))
 	case fetchAssetMeta:
-		result.Size = resp.ContentLength
-		if method != http.MethodHead && resp.ContentLength < 0 {
-			size, readErr := io.Copy(io.Discard, resp.Body)
-			if readErr != nil {
-				return fetchResult{StatusCode: resp.StatusCode, Err: fmt.Errorf("read body: %w", readErr)}, true
-			}
-			result.Size = size
+		size, err := readAssetSize(resp, method)
+		if err != nil {
+			return fetchResult{StatusCode: resp.StatusCode, Err: err}, true
 		}
+		result.AssetSize = size
+	}
+	return result, isTransientStatus(resp.StatusCode)
+}
+
+func readPageBody(resp *http.Response) ([]byte, error) {
+	reader, err := charset.NewReader(
+		io.LimitReader(resp.Body, maxPageBytes),
+		resp.Header.Get("Content-Type"),
+	)
+	if errors.Is(err, io.EOF) {
+		reader = http.NoBody
+	} else if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
 	}
 
-	return result, isTransientStatus(resp.StatusCode)
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	return body, nil
+}
+
+func readAssetSize(resp *http.Response, method string) (int64, error) {
+	if method == http.MethodHead || resp.ContentLength >= 0 {
+		return resp.ContentLength, nil
+	}
+
+	size, err := io.Copy(io.Discard, resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("read body: %w", err)
+	}
+	return size, nil
+}
+
+// fetchFailure classifies a failed probe and returns its status code and error
+// text. The boolean is false when the probe succeeded.
+func fetchFailure(result fetchResult) (statusCode int, errText string, failed bool) {
+	if result.Err != nil {
+		return 0, result.Err.Error(), true
+	}
+	if result.StatusCode >= http.StatusBadRequest {
+		return result.StatusCode, statusErrorText(result.StatusCode), true
+	}
+	return 0, "", false
 }
 
 func statusErrorText(statusCode int) string {

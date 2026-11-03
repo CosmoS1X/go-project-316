@@ -200,45 +200,34 @@ func TestAnalyzeTimeout(t *testing.T) {
 func TestAnalyzeReadBodyError(t *testing.T) {
 	t.Parallel()
 
-	data, err := crawler.Analyze(t.Context(), crawler.Options{
-		URL:        exampleURL + "/",
-		Depth:      1,
-		Timeout:    time.Second,
-		HTTPClient: &http.Client{Transport: failingBodyTransport{}},
-	})
-	require.NoError(t, err)
+	tests := []struct {
+		name      string
+		transport http.RoundTripper
+	}{
+		{name: "immediate error", transport: failingBodyTransport{}},
+		{name: "error after preview", transport: lateFailingBodyTransport{}},
+	}
 
-	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	got := rep.Pages[0]
-	assert.Equal(t, http.StatusOK, got.HTTPStatus)
-	assert.Equal(t, "error", got.Status)
-	assert.Contains(t, got.Error, "read body")
-	assert.Nil(t, got.BrokenLinks)
-	assert.Nil(t, got.Assets)
-}
+			rep := analyzeReport(t, crawler.Options{
+				URL:        exampleURL + "/",
+				Depth:      1,
+				Timeout:    time.Second,
+				HTTPClient: &http.Client{Transport: tt.transport},
+			})
+			require.Len(t, rep.Pages, 1)
 
-func TestAnalyzeReadBodyErrorAfterPreview(t *testing.T) {
-	t.Parallel()
-
-	data, err := crawler.Analyze(t.Context(), crawler.Options{
-		URL:        exampleURL + "/",
-		Depth:      1,
-		Timeout:    time.Second,
-		HTTPClient: &http.Client{Transport: lateFailingBodyTransport{}},
-	})
-	require.NoError(t, err)
-
-	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
-
-	got := rep.Pages[0]
-	assert.Equal(t, http.StatusOK, got.HTTPStatus)
-	assert.Equal(t, "error", got.Status)
-	assert.Contains(t, got.Error, "read body")
-	assert.Nil(t, got.BrokenLinks)
-	assert.Nil(t, got.Assets)
+			got := rep.Pages[0]
+			assert.Equal(t, http.StatusOK, got.HTTPStatus)
+			assert.Equal(t, "error", got.Status)
+			assert.Contains(t, got.Error, "read body")
+			assert.Nil(t, got.BrokenLinks)
+			assert.Nil(t, got.Assets)
+		})
+	}
 }
 
 func TestAnalyzePageHTTPError(t *testing.T) {

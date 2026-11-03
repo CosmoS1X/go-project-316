@@ -21,77 +21,87 @@ const brokenPath = "/broken"
 func TestAnalyzeBrokenLinks(t *testing.T) {
 	t.Parallel()
 
-	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/":
-			writeBody(t, w, `<a href="/working">working</a><a href="/broken">broken</a>`)
-		case "/working":
-			w.WriteHeader(http.StatusOK)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
+	tests := []struct {
+		name       string
+		fixture    string
+		statuses   map[string]int
+		wantBroken []crawler.BrokenLink
+		wantAssets []crawler.Asset
+	}{
+		{
+			name:    "navigation links",
+			fixture: "broken_links.html",
+			statuses: map[string]int{
+				"/working": http.StatusOK,
+				"/broken":  http.StatusNotFound,
+			},
+			wantBroken: []crawler.BrokenLink{
+				{URL: brokenPath, StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
+			},
+			wantAssets: []crawler.Asset{},
+		},
+		{
+			name:    "tags and assets",
+			fixture: "broken_tags.html",
+			statuses: map[string]int{
+				"/working":       http.StatusOK,
+				"/assets/app.js": http.StatusOK,
+			},
+			wantBroken: []crawler.BrokenLink{},
+			wantAssets: []crawler.Asset{
+				{
+					URL:        "/assets/missing.png",
+					Type:       assetTypeImage,
+					StatusCode: http.StatusNotFound,
+					Error:      http.StatusText(http.StatusNotFound),
+				},
+				{
+					URL:        "/assets/app.js",
+					Type:       assetTypeScript,
+					StatusCode: http.StatusOK,
+				},
+			},
+		},
+	}
 
-	data, err := crawler.Analyze(t.Context(), crawler.Options{
-		URL:        srv.URL,
-		Depth:      1,
-		Timeout:    time.Second,
-		HTTPClient: srv.Client(),
-	})
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
+			srv := newPageServer(t, loadFixture(t, tt.fixture), tt.statuses)
+			rep := analyzeReport(t, crawler.Options{
+				URL:        srv.URL,
+				Depth:      1,
+				Timeout:    time.Second,
+				HTTPClient: srv.Client(),
+			})
+			require.Len(t, rep.Pages, 1)
 
-	assert.Equal(t, srv.URL, rep.Pages[0].URL)
-	assert.Equal(t, 0, rep.Pages[0].Depth)
-	assert.Equal(t, []crawler.BrokenLink{
-		{URL: srv.URL + brokenPath, StatusCode: http.StatusNotFound, Error: http.StatusText(http.StatusNotFound)},
-	}, rep.Pages[0].BrokenLinks)
+			page := rep.Pages[0]
+			assert.Equal(t, srv.URL, page.URL)
+			assert.Equal(t, 0, page.Depth)
+			assert.Equal(t, absolutize(srv.URL, tt.wantBroken), page.BrokenLinks)
+			assert.Equal(t, absolutizeAssets(srv.URL, tt.wantAssets), page.Assets)
+		})
+	}
 }
 
-func TestAnalyzeBrokenLinkTags(t *testing.T) {
-	t.Parallel()
+func absolutize(baseURL string, links []crawler.BrokenLink) []crawler.BrokenLink {
+	result := make([]crawler.BrokenLink, 0, len(links))
+	for _, link := range links {
+		link.URL = baseURL + link.URL
+		result = append(result, link)
+	}
+	return result
+}
 
-	body := loadFixture(t, "broken_tags.html")
-	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/":
-			writeBody(t, w, body)
-		case "/working", "/assets/app.js":
-			w.WriteHeader(http.StatusOK)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
-
-	data, err := crawler.Analyze(t.Context(), crawler.Options{
-		URL:        srv.URL,
-		Depth:      1,
-		Timeout:    time.Second,
-		HTTPClient: srv.Client(),
-	})
-	require.NoError(t, err)
-
-	rep := decodeReport(t, data)
-	require.Len(t, rep.Pages, 1)
-
-	assert.Equal(t, srv.URL, rep.Pages[0].URL)
-	assert.Equal(t, 0, rep.Pages[0].Depth)
-	assert.Empty(t, rep.Pages[0].BrokenLinks)
-	assert.Equal(t, []crawler.Asset{
-		{
-			URL:        srv.URL + "/assets/missing.png",
-			Type:       assetTypeImage,
-			StatusCode: http.StatusNotFound,
-			Error:      http.StatusText(http.StatusNotFound),
-		},
-		{
-			URL:        srv.URL + "/assets/app.js",
-			Type:       assetTypeScript,
-			StatusCode: http.StatusOK,
-		},
-	}, rep.Pages[0].Assets)
+func absolutizeAssets(baseURL string, assets []crawler.Asset) []crawler.Asset {
+	result := make([]crawler.Asset, 0, len(assets))
+	for _, asset := range assets {
+		asset.URL = baseURL + asset.URL
+		result = append(result, asset)
+	}
+	return result
 }
 
 func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
@@ -99,14 +109,11 @@ func TestAnalyzeBrokenLinksIgnoresUnsupported(t *testing.T) {
 
 	body := loadFixture(t, "broken_links_ignore.html")
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/":
+		if r.URL.Path == "/" {
 			writeBody(t, w, body)
-		case brokenPath:
-			w.WriteHeader(http.StatusNotFound)
-		default:
-			w.WriteHeader(http.StatusOK)
+			return
 		}
+		w.WriteHeader(http.StatusNotFound)
 	})
 
 	data, err := crawler.Analyze(t.Context(), crawler.Options{

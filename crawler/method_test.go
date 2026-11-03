@@ -56,11 +56,11 @@ func TestAnalyzeUsesHeadForLinkAndAssetChecks(t *testing.T) {
 	require.NotEmpty(t, data)
 
 	checks := tr.recorded()
-	require.Len(t, checks, 3)
-
-	assert.Equal(t, methodCheck{method: http.MethodGet, url: exampleURL + "/"}, checks[0])
-	assert.Equal(t, methodCheck{method: http.MethodHead, url: "https://assets.example/logo.png"}, checks[1])
-	assert.Equal(t, methodCheck{method: http.MethodHead, url: "https://links.example/page"}, checks[2])
+	assert.ElementsMatch(t, []methodCheck{
+		{method: http.MethodGet, url: exampleURL + "/"},
+		{method: http.MethodHead, url: "https://assets.example/logo.png"},
+		{method: http.MethodHead, url: "https://links.example/page"},
+	}, checks)
 }
 
 func TestAnalyzeFallsBackToGetOnMethodNotAllowed(t *testing.T) {

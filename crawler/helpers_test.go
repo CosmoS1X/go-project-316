@@ -43,6 +43,14 @@ func decodeReport(t *testing.T, data []byte) crawler.Report {
 	return rep
 }
 
+func analyzeReport(t *testing.T, opts crawler.Options) crawler.Report {
+	t.Helper()
+
+	data, err := crawler.Analyze(t.Context(), opts)
+	require.NoError(t, err)
+	return decodeReport(t, data)
+}
+
 func testResponse(req *http.Request, body string) *http.Response {
 	return responseWithStatus(req, http.StatusOK, body)
 }
@@ -58,12 +66,36 @@ func responseWithStatus(req *http.Request, statusCode int, body string) *http.Re
 	}
 }
 
+func responseWithContentLength(req *http.Request, contentLength int64) *http.Response {
+	resp := responseWithStatus(req, http.StatusOK, "")
+	resp.ContentLength = contentLength
+	return resp
+}
+
 func newTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// newPageServer serves pageHTML at the root and the configured status codes for
+// other paths. Unknown paths return 404 so unexpected probes are visible.
+func newPageServer(t *testing.T, pageHTML string, statuses map[string]int) *httptest.Server {
+	t.Helper()
+
+	return newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			writeBody(t, w, pageHTML)
+			return
+		}
+		statusCode, ok := statuses[r.URL.Path]
+		if !ok {
+			statusCode = http.StatusNotFound
+		}
+		w.WriteHeader(statusCode)
+	})
 }
 
 func writeBody(t *testing.T, w http.ResponseWriter, body string) {

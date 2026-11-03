@@ -16,7 +16,11 @@ import (
 	"code/crawler"
 )
 
-const referenceLogoSize = 12345
+const (
+	referenceLogoSize   = 12345
+	referenceScriptSize = 32
+	referenceStyleSize  = 24
+)
 
 type referenceTransport struct {
 	pageHTML string
@@ -24,12 +28,20 @@ type referenceTransport struct {
 
 func (tr referenceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	switch {
-	case req.URL.Host == exampleHost && req.URL.Path == "/static/logo.png":
-		return responseWithStatus(req, http.StatusOK, strings.Repeat("x", referenceLogoSize)), nil
-	case req.URL.Host == exampleHost:
-		return responseWithStatus(req, http.StatusOK, tr.pageHTML), nil
+	case req.URL.Host == exampleHost && (req.URL.Path == "" || req.URL.Path == "/"):
+		return testResponse(req, tr.pageHTML), nil
+	case req.URL.Host == exampleHost && req.URL.Path == "/about":
+		return responseWithStatus(req, http.StatusOK, ""), nil
+	case req.URL.Host == exampleHost && req.URL.Path == "/missing":
+		return responseWithStatus(req, http.StatusNotFound, ""), nil
 	case req.URL.Host == externalHost && req.URL.Path == "/missing":
 		return responseWithStatus(req, http.StatusNotFound, ""), nil
+	case req.URL.Host == exampleHost && req.URL.Path == "/static/logo.png":
+		return responseWithContentLength(req, referenceLogoSize), nil
+	case req.URL.Host == exampleHost && req.URL.Path == "/static/app.js":
+		return responseWithContentLength(req, referenceScriptSize), nil
+	case req.URL.Host == exampleHost && req.URL.Path == "/static/app.css":
+		return responseWithContentLength(req, referenceStyleSize), nil
 	default:
 		return nil, fmt.Errorf("unexpected request: %s", req.URL)
 	}
@@ -60,6 +72,12 @@ func TestAnalyzeMatchesReferenceReport(t *testing.T) {
 
 	data, err := crawler.Analyze(t.Context(), referenceOptions(t, true))
 	require.NoError(t, err)
+
+	report := decodeReport(t, data)
+	assert.Equal(t, exampleURL, report.RootURL)
+	assert.Equal(t, 1, report.Depth)
+	require.Len(t, report.Pages, 1)
+	assert.Equal(t, exampleURL, report.Pages[0].URL)
 
 	want := normalizeTimes(strings.TrimSuffix(loadFixture(t, "report_reference.json"), "\n"))
 	assert.Equal(t, want, normalizeTimes(string(data)))

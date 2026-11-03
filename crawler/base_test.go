@@ -125,3 +125,34 @@ func TestAnalyzeFirstBaseHrefWins(t *testing.T) {
 	require.Len(t, rep.Pages, 2)
 	assert.Equal(t, srv.URL+"/first/child", rep.Pages[1].URL)
 }
+
+func TestAnalyzeUsesFirstValidBaseHref(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		bases string
+	}{
+		{name: "base without href", bases: `<base target="_blank">`},
+		{name: "empty base href", bases: `<base href="">`},
+		{name: "invalid base href", bases: `<base href="ftp://example.com/">`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := newPageServer(t, tt.bases+`<base href="/section/"><a href="child">child</a>`, map[string]int{
+				"/section/child": http.StatusOK,
+			})
+			rep := analyzeReport(t, crawler.Options{
+				URL:        srv.URL,
+				Depth:      2,
+				Timeout:    time.Second,
+				HTTPClient: srv.Client(),
+			})
+			require.Len(t, rep.Pages, 2)
+			assert.Equal(t, srv.URL+"/section/child", rep.Pages[1].URL)
+		})
+	}
+}

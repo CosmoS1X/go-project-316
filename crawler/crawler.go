@@ -40,7 +40,7 @@ func newCrawler(opts Options) (*crawler, error) {
 	}, nil
 }
 
-func (c *crawler) Run(ctx context.Context) *Report {
+func (c *crawler) run(ctx context.Context) *Report {
 	generatedAt := time.Now().UTC().Truncate(time.Second)
 
 	visited := make(map[string]struct{})
@@ -63,8 +63,8 @@ func (c *crawler) Run(ctx context.Context) *Report {
 		current := queue[0]
 		queue = queue[1:]
 
-		p, base, links := c.visitPage(ctx, current.url, current.depth)
-		pages = append(pages, p)
+		page, base, links := c.visitPage(ctx, current.url, current.depth)
+		pages = append(pages, page)
 
 		if ctx.Err() != nil {
 			break
@@ -78,7 +78,7 @@ func (c *crawler) Run(ctx context.Context) *Report {
 			if ctx.Err() != nil {
 				break
 			}
-			linkURL, ok := c.resolveNavigationLink(base, link)
+			linkURL, ok := resolveNavigationLink(base, link)
 			if !ok {
 				continue
 			}
@@ -114,11 +114,11 @@ func (c *crawler) visitPage(
 	ctx context.Context,
 	pageURL *url.URL,
 	depth int,
-) (p Page, base *url.URL, links []extractedLink) {
+) (page Page, base *url.URL, links []extractedLink) {
 	discoveredAt := time.Now().UTC().Truncate(time.Second)
 	result := c.fetch(ctx, http.MethodGet, pageURL.String(), fetchFullBody)
 
-	p = Page{
+	page = Page{
 		URL:          pageURL.String(),
 		Depth:        depth,
 		HTTPStatus:   result.StatusCode,
@@ -126,37 +126,23 @@ func (c *crawler) visitPage(
 		DiscoveredAt: discoveredAt,
 	}
 	if result.Err != nil {
-		p.Status = statusError
-		p.Error = result.Err.Error()
-		return p, pageURL, nil
+		page.Status = statusError
+		page.Error = result.Err.Error()
+		return page, pageURL, nil
 	}
 
 	if result.StatusCode >= http.StatusBadRequest {
-		p.Status = statusError
-		p.Error = statusErrorText(result.StatusCode)
+		page.Status = statusError
+		page.Error = statusErrorText(result.StatusCode)
 	}
 
-	var baseHref string
-	links, baseHref = extractLinks(result.Body)
-	base = pageURL
-	if baseHref != "" {
-		if resolved, ok := resolveLink(pageURL, baseHref); ok {
-			base = resolved
-		}
-	}
+	links, baseHrefs := extractLinks(result.Body)
+	base = resolveBase(pageURL, baseHrefs)
 
-	p.SEO = extractSEO(result.Body)
-	p.Assets = c.collectAssets(ctx, base, links)
-	p.BrokenLinks = c.findBrokenLinks(ctx, pageURL, base, depth, links)
-	return p, base, links
-}
-
-// resolveNavigationLink resolves a raw link and rejects non-navigation kinds.
-func (c *crawler) resolveNavigationLink(base *url.URL, link extractedLink) (*url.URL, bool) {
-	if link.Kind != linkNavigation {
-		return nil, false
-	}
-	return resolveLink(base, link.URL)
+	page.SEO = extractSEO(result.Body)
+	page.Assets = c.collectAssets(ctx, base, links)
+	page.BrokenLinks = c.findBrokenLinks(ctx, pageURL, base, depth, links)
+	return page, base, links
 }
 
 // isInternal reports whether the URL points to the crawl root host.

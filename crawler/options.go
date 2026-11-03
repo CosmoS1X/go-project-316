@@ -32,26 +32,23 @@ func (o Options) validate() (*url.URL, error) {
 	if o.HTTPClient == nil {
 		return nil, ErrNilHTTPClient
 	}
-	if o.Depth < 0 {
-		return nil, fmt.Errorf("%w: depth must not be negative", ErrInvalidOptions)
+
+	checks := []struct {
+		invalid bool
+		message string
+	}{
+		{invalid: o.Depth < 0, message: "depth must not be negative"},
+		{invalid: o.Timeout < 0, message: "timeout must not be negative"},
+		{invalid: o.Retries < 0, message: "retries must not be negative"},
+		{invalid: o.Delay < 0, message: "delay must not be negative"},
+		{invalid: o.Concurrency < 0, message: "concurrency must not be negative"},
+		{invalid: math.IsNaN(o.RPS) || math.IsInf(o.RPS, 0), message: "rps must be finite"},
+		{invalid: o.RPS < 0, message: "rps must not be negative"},
 	}
-	if o.Timeout < 0 {
-		return nil, fmt.Errorf("%w: timeout must not be negative", ErrInvalidOptions)
-	}
-	if o.Retries < 0 {
-		return nil, fmt.Errorf("%w: retries must not be negative", ErrInvalidOptions)
-	}
-	if o.Delay < 0 {
-		return nil, fmt.Errorf("%w: delay must not be negative", ErrInvalidOptions)
-	}
-	if o.Concurrency < 0 {
-		return nil, fmt.Errorf("%w: concurrency must not be negative", ErrInvalidOptions)
-	}
-	if math.IsNaN(o.RPS) || math.IsInf(o.RPS, 0) {
-		return nil, fmt.Errorf("%w: rps must be finite", ErrInvalidOptions)
-	}
-	if o.RPS < 0 {
-		return nil, fmt.Errorf("%w: rps must not be negative", ErrInvalidOptions)
+	for _, check := range checks {
+		if check.invalid {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOptions, check.message)
+		}
 	}
 	return parseURL(o.URL)
 }

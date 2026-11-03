@@ -27,7 +27,7 @@ var assetKinds = []struct {
 	{kind: linkStyle, typeName: assetTypeStyle},
 }
 
-func (c *crawler) collectAssets(ctx context.Context, pageURL *url.URL, rawLinks []extractedLink) []Asset {
+func (c *crawler) collectAssets(ctx context.Context, base *url.URL, rawLinks []extractedLink) []Asset {
 	byKind := make(map[linkKind][]extractedLink, len(assetKinds))
 	for _, link := range rawLinks {
 		byKind[link.Kind] = append(byKind[link.Kind], link)
@@ -42,7 +42,7 @@ func (c *crawler) collectAssets(ctx context.Context, pageURL *url.URL, rawLinks 
 				return assets
 			}
 
-			resolved, ok := resolveLink(pageURL, link.URL)
+			resolved, ok := resolveLink(base, link.URL)
 			if !ok {
 				continue
 			}
@@ -78,21 +78,14 @@ func (c *crawler) collectAssets(ctx context.Context, pageURL *url.URL, rawLinks 
 func (c *crawler) fetchAsset(ctx context.Context, assetURL string) assetMeta {
 	result := c.fetchWithGETFallback(ctx, assetURL, fetchAssetMeta, func(result fetchResult) bool {
 		return result.StatusCode == http.StatusMethodNotAllowed ||
-			(result.StatusCode < http.StatusBadRequest && result.Size < 0)
+			(result.StatusCode < http.StatusBadRequest && result.AssetSize < 0)
 	})
 
-	var meta assetMeta
-	if result.Err != nil {
-		meta.Error = result.Err.Error()
-		return meta
+	if statusCode, errText, failed := fetchFailure(result); failed {
+		return assetMeta{StatusCode: statusCode, Error: errText}
 	}
-
-	meta.StatusCode = result.StatusCode
-	if result.StatusCode >= http.StatusBadRequest {
-		meta.Error = statusErrorText(result.StatusCode)
-		return meta
+	return assetMeta{
+		StatusCode: result.StatusCode,
+		SizeBytes:  result.AssetSize,
 	}
-
-	meta.SizeBytes = result.Size
-	return meta
 }

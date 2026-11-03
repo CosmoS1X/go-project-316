@@ -3,6 +3,7 @@ package crawler_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -75,39 +76,42 @@ func TestAnalyzeDuplicateInternalLinks(t *testing.T) {
 	assert.NotEqual(t, rep.Pages[1].URL, rep.Pages[0].URL)
 }
 
+type externalLinkTransport struct{}
+
+func (externalLinkTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	switch req.URL.Host {
+	case exampleHost:
+		switch req.URL.Path {
+		case "", "/":
+			return testResponse(req, `<a href="/ok">ok</a><a href="https://other.example/x">ext</a>`), nil
+		case "/ok":
+			return testResponse(req, ""), nil
+		}
+	case "other.example":
+		return responseWithStatus(req, http.StatusNotFound, ""), nil
+	}
+	return nil, fmt.Errorf("unexpected request: %s", req.URL)
+}
+
 func TestAnalyzeExternalLinkNotTraversed(t *testing.T) {
 	t.Parallel()
 
-	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/":
-			writeBody(t, w, `<a href="/ok">ok</a><a href="https://other.example/x">ext</a>`)
-		case "/ok":
-			w.WriteHeader(http.StatusOK)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
-
-	data, err := crawler.Analyze(t.Context(), crawler.Options{
-		URL:        srv.URL,
+	rep := analyzeReport(t, crawler.Options{
+		URL:        exampleURL,
 		Depth:      2,
 		Timeout:    time.Second,
-		HTTPClient: srv.Client(),
+		HTTPClient: &http.Client{Transport: externalLinkTransport{}},
 	})
-	require.NoError(t, err)
-
-	rep := decodeReport(t, data)
 	require.Len(t, rep.Pages, 2)
 
-	assert.Equal(t, srv.URL, rep.Pages[0].URL)
+	assert.Equal(t, exampleURL, rep.Pages[0].URL)
 	assert.Equal(t, 0, rep.Pages[0].Depth)
-	assert.Equal(t, srv.URL+"/ok", rep.Pages[1].URL)
+	assert.Equal(t, exampleURL+"/ok", rep.Pages[1].URL)
 	assert.Equal(t, 1, rep.Pages[1].Depth)
 	assert.Equal(t, "ok", rep.Pages[1].Status)
 
-	for _, p := range rep.Pages {
-		assert.NotContains(t, p.URL, "other.example")
+	for _, page := range rep.Pages {
+		assert.NotContains(t, page.URL, "other.example")
 	}
 }
 

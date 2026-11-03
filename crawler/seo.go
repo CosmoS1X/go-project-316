@@ -12,47 +12,55 @@ func extractSEO(body []byte) SEO {
 	var (
 		result       SEO
 		titleSeen    bool
-		titleDepth   int
+		inTitle      bool
 		titleBuilder strings.Builder
 	)
 
 	for {
 		tokenType := tokenizer.Next()
-		switch tokenType {
-		case html.ErrorToken:
+		if tokenType == html.ErrorToken {
 			result.Title = cleanText(titleBuilder.String())
 			result.Description = cleanText(result.Description)
 			return result
-		case html.StartTagToken, html.SelfClosingTagToken:
-			tagName, _ := tokenizer.TagName()
-			switch string(tagName) {
-			case "title":
-				if titleSeen {
-					continue
-				}
-				titleSeen = true
-				result.HasTitle = true
-				if tokenType == html.StartTagToken {
-					titleDepth++
-				}
-			case "h1":
-				result.HasH1 = true
-			case "meta":
-				if hasDescription, description := metaDescription(tokenizer); hasDescription && !result.HasDescription {
-					result.HasDescription = true
-					result.Description = description
-				}
-			}
-		case html.TextToken:
-			if titleDepth > 0 {
+		}
+
+		if tokenType == html.TextToken {
+			if inTitle {
 				titleBuilder.Write(tokenizer.Text())
 			}
-		case html.EndTagToken:
+			continue
+		}
+
+		if tokenType == html.EndTagToken {
 			tagName, _ := tokenizer.TagName()
-			if string(tagName) == "title" && titleDepth > 0 {
-				titleDepth--
+			if string(tagName) == "title" && inTitle {
+				inTitle = false
 			}
-		case html.CommentToken, html.DoctypeToken:
+			continue
+		}
+
+		if tokenType != html.StartTagToken && tokenType != html.SelfClosingTagToken {
+			continue
+		}
+
+		tagName, _ := tokenizer.TagName()
+		switch string(tagName) {
+		case "title":
+			if titleSeen {
+				continue
+			}
+			titleSeen = true
+			result.HasTitle = true
+			if tokenType == html.StartTagToken {
+				inTitle = true
+			}
+		case "h1":
+			result.HasH1 = true
+		case "meta":
+			if hasDescription, description := metaDescription(tokenizer); hasDescription && !result.HasDescription {
+				result.HasDescription = true
+				result.Description = description
+			}
 		}
 	}
 }
