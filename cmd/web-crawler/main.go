@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/signal"
 
-	"code/internal/app"
+	"github.com/CosmoS1X/web-crawler/internal/app"
 )
 
 func main() {

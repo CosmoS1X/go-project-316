@@ -8,11 +8,11 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"code/crawler"
+	"github.com/CosmoS1X/web-crawler/crawler"
 )
 
 const (
-	appName          = "hexlet-go-crawler"
+	appName          = "web-crawler"
 	appUsage         = "analyze a website structure"
 	argsUsage        = "<url>"
 	defaultDepth     = 10

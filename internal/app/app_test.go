@@ -15,11 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 
-	"code/crawler"
-	"code/internal/app"
+	"github.com/CosmoS1X/web-crawler/crawler"
+	"github.com/CosmoS1X/web-crawler/internal/app"
 )
 
-const commandName = "hexlet-go-crawler"
+const commandName = "web-crawler"
 
 func newTestCommand(client *http.Client) (*cli.Command, *bytes.Buffer) {
 	cmd := app.New(client)

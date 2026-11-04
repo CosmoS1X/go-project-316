@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/encoding/charmap"
 
-	"code/crawler"
+	"github.com/CosmoS1X/web-crawler/crawler"
 )
 
 type sequenceResult struct {

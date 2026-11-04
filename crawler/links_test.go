@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"code/crawler"
+	"github.com/CosmoS1X/web-crawler/crawler"
 )
 
 const brokenPath = "/broken"

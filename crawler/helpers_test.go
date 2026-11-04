@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"code/crawler"
+	"github.com/CosmoS1X/web-crawler/crawler"
 )
 
 const (

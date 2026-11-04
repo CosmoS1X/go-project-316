@@ -1,6 +1,6 @@
-module code
+module github.com/CosmoS1X/web-crawler
 
-go 1.26.0
+go 1.27.3
 
 require (
 	github.com/stretchr/testify v1.12.1
