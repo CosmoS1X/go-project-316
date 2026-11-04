@@ -19,14 +19,26 @@ import (
 	"github.com/CosmoS1X/web-crawler/internal/app"
 )
 
-const commandName = "web-crawler"
+const (
+	commandName = "web-crawler"
+	testVersion = "1.2.3"
+)
 
 func newTestCommand(client *http.Client) (*cli.Command, *bytes.Buffer) {
-	cmd := app.New(client)
+	cmd := app.New(client, testVersion)
 	buf := &bytes.Buffer{}
 	cmd.Writer = buf
 	cmd.ErrWriter = buf
 	return cmd, buf
+}
+
+func TestVersionFlag(t *testing.T) {
+	t.Parallel()
+
+	cmd, buf := newTestCommand(&http.Client{})
+
+	require.NoError(t, cmd.Run(t.Context(), []string{commandName, "--version"}))
+	assert.Equal(t, commandName+" version "+testVersion+"\n", buf.String())
 }
 
 func TestHelpDescribesFlags(t *testing.T) {

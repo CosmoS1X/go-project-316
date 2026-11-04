@@ -23,11 +23,12 @@ const (
 	defaultUserAgent = ""
 )
 
-// New builds the CLI command. The HTTP client is injected by the caller.
-func New(client *http.Client) *cli.Command {
+// New builds the CLI command. The HTTP client and version are injected by the caller.
+func New(client *http.Client, version string) *cli.Command {
 	return &cli.Command{
 		Name:      appName,
 		Usage:     appUsage,
+		Version:   version,
 		ArgsUsage: argsUsage,
 		Arguments: []cli.Argument{
 			&cli.StringArg{Name: "url", UsageText: argsUsage, Required: true},
